@@ -1,0 +1,16 @@
+popquiz:
+  - scout
+  - planner
+  - builder
+  - reviewer
+
+popquiz-full:
+  - scout
+  - planner
+  - builder
+  - reviewer
+  - tester
+
+qa:
+  - tester
+  - red-team
