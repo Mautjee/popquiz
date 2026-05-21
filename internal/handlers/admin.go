@@ -564,6 +564,11 @@ func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request
 	pointsStr := r.FormValue("points")
 	options := r.FormValue("options")
 
+	// For MC questions, the correct_answer may come from correct_answer_mc
+	if questionType == "multiple_choice" && correctAnswer == "" {
+		correctAnswer = r.FormValue("correct_answer_mc")
+	}
+
 	points := 1
 	if pointsStr != "" {
 		if p, err := strconv.Atoi(pointsStr); err == nil && p > 0 {
