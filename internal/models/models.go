@@ -5,6 +5,7 @@ import "database/sql"
 type Quiz struct {
 	ID        int64
 	Title     string
+	Mode      string
 	CreatedAt string
 }
 

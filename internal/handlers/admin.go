@@ -159,7 +159,7 @@ func (h *AdminHandler) PostLogin(w http.ResponseWriter, r *http.Request) {
 // --- Admin Index ---
 
 func (h *AdminHandler) GetIndex(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query("SELECT id, title, created_at FROM quizzes ORDER BY created_at DESC")
+	rows, err := h.db.Query("SELECT id, title, mode, created_at FROM quizzes ORDER BY created_at DESC")
 	if err != nil {
 		log.Printf("Error loading quizzes: %v", err)
 		http.Error(w, "Error loading quizzes", http.StatusInternalServerError)
@@ -170,7 +170,7 @@ func (h *AdminHandler) GetIndex(w http.ResponseWriter, r *http.Request) {
 	var quizzes []models.Quiz
 	for rows.Next() {
 		var q models.Quiz
-		rows.Scan(&q.ID, &q.Title, &q.CreatedAt)
+		rows.Scan(&q.ID, &q.Title, &q.Mode, &q.CreatedAt)
 		quizzes = append(quizzes, q)
 	}
 
@@ -222,7 +222,7 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var quiz models.Quiz
-	err = h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", quizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+	err = h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", quizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
 	if err != nil {
 		http.Error(w, "Quiz not found", http.StatusNotFound)
 		return
@@ -677,7 +677,7 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 
 	// Load quiz
 	var quiz models.Quiz
-	h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+	h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
 
 	data := map[string]interface{}{
 		"Game": game,
@@ -1335,7 +1335,7 @@ func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
 	h.db.QueryRow("SELECT name FROM rounds WHERE id = ?", game.CurrentRoundID.Int64).Scan(&roundName)
 
 	var quiz models.Quiz
-	h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+	h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
 
 	data := map[string]interface{}{
 		"Game":           game,

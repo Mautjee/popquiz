@@ -164,5 +164,16 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Add mode column to quizzes if not exists
+	var modeCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('quizzes') WHERE name='mode'").Scan(&modeCount)
+	if err != nil {
+		tx.Exec("ALTER TABLE quizzes ADD COLUMN mode TEXT NOT NULL DEFAULT 'online' CHECK(mode IN ('online', 'offline'))")
+	} else if modeCount == 0 {
+		if _, err := tx.Exec("ALTER TABLE quizzes ADD COLUMN mode TEXT NOT NULL DEFAULT 'online' CHECK(mode IN ('online', 'offline'))"); err != nil {
+			log.Printf("Warning: could not add mode column: %v", err)
+		}
+	}
+
 	return tx.Commit()
 }

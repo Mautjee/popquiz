@@ -6,6 +6,7 @@
 <div class="max-w-2xl mx-auto p-8">
     <h1 class="text-3xl font-bold text-center text-yellow-400 mb-8">🏆 Final Results</h1>
 
+    {{if eq .QuizMode "online"}}
     {{if .Results}}
     <div class="bg-gray-800 rounded-lg overflow-hidden">
         <table class="w-full">
@@ -32,9 +33,46 @@
         <p>No results yet.</p>
     </div>
     {{end}}
+    {{else}}
+    {{/* Offline mode: show round/question summary, no leaderboard */}}
+    {{if .RoundSummary}}
+    <div class="space-y-4">
+        {{range .RoundSummary}}
+        <div class="bg-gray-800 rounded-lg p-4">
+            <h3 class="text-lg font-semibold text-indigo-300 mb-2">{{.RoundName}}</h3>
+            <ul class="text-gray-300 text-sm space-y-1">
+                {{range .Questions}}
+                <li><span class="text-gray-400">Q:</span> {{.QuestionText}} — <span class="text-green-400">{{.CorrectAnswer}}</span></li>
+                {{end}}
+            </ul>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+    {{end}}
 
     <div class="text-center mt-6">
         <p class="text-gray-400 text-sm">Thanks for playing! 🎉</p>
     </div>
+
+    <div class="flex gap-3 justify-center mt-4">
+        <a href="/game/{{.Code}}" class="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white transition">
+            🔄 Rejoin Game
+        </a>
+        <button onclick="document.cookie = 'player_session=; Path=/; Max-Age=0'; window.location.href = '/';" class="px-6 py-2 bg-gray-600 hover:bg-gray-700 rounded-lg font-semibold text-white transition">
+            🚪 Leave Game
+        </button>
+    </div>
 </div>
+
+<script>
+const roomCode = "{{.Code}}";
+const es = new EventSource('/game/' + roomCode + '/events');
+es.addEventListener('state_change', function(e) {
+    try {
+        const d = JSON.parse(e.data);
+        if (d.state === 'lobby') window.location.href = '/game/' + roomCode;
+    } catch {}
+});
+</script>
 {{end}}
