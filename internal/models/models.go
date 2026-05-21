@@ -28,6 +28,21 @@ type Question struct {
 	ImageFilename sql.NullString
 	Points        int
 	OrderIndex    int
+	VideoGroupID  sql.NullInt64
+}
+
+type VideoGroup struct {
+	ID            int64
+	RoundID       int64
+	Title         string
+	VideoFilename sql.NullString
+	OrderIndex    int
+}
+
+// VideoGroupWithQuestions is used in templates to render a group with its questions.
+type VideoGroupWithQuestions struct {
+	Group     VideoGroup
+	Questions []Question
 }
 
 type Game struct {
@@ -72,4 +87,12 @@ type AdminSession struct {
 	Token     string
 	CreatedAt string
 	ExpiresAt string
+}
+
+// RoundData is used in templates to render a round with its video groups and questions.
+type RoundData struct {
+	Round               Round
+	Questions           []Question
+	VideoGroups         []VideoGroupWithQuestions
+	UngroupedQuestions  []Question
 }

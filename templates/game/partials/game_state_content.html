@@ -16,11 +16,11 @@
     <p class="text-sm text-gray-400 mb-2">{{.CurrentRound.Name}}</p>
     {{end}}
 
-    {{if .CurrentQuestion.VideoFilename.Valid}}
+    {{if or .CurrentQuestion.VideoFilename.Valid .VideoURL}}
     <!-- Video question: video shown first, question hidden until show_question -->
     <div id="video-container" class="mb-4" {{if .ShowQuestion}}style="display:none"{{end}}>
-        <video id="video-player" class="w-full rounded-lg bg-black" preload="metadata">
-            <source src="/static/videos/{{.CurrentQuestion.VideoFilename.String}}" type="video/mp4">
+        <video id="video-player" class="w-full rounded-lg bg-black" preload="metadata" data-video-url="{{if .VideoURL}}{{.VideoURL}}{{else}}/static/videos/{{.CurrentQuestion.VideoFilename.String}}{{end}}">
+            <source src="{{if .VideoURL}}{{.VideoURL}}{{else}}/static/videos/{{.CurrentQuestion.VideoFilename.String}}{{end}}" type="video/mp4">
         </video>
         <button id="manual-play-btn" class="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm"
                 onclick="this.style.display='none'; document.getElementById('video-player').play();">

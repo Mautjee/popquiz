@@ -189,5 +189,34 @@ func migrate(db *sql.DB) error {
 		}
 	}
 
+	// Create video_groups table if not exists
+	if _, err := tx.Exec(`
+		CREATE TABLE IF NOT EXISTS video_groups (
+			id             INTEGER PRIMARY KEY AUTOINCREMENT,
+			round_id       INTEGER NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+			title          TEXT NOT NULL DEFAULT '',
+			video_filename TEXT,
+			order_index    INTEGER NOT NULL DEFAULT 0
+		)
+	`); err != nil {
+		log.Printf("Warning: could not create video_groups table: %v", err)
+	}
+	// Create index on video_groups(round_id)
+	tx.Exec("CREATE INDEX IF NOT EXISTS idx_video_groups_round_id ON video_groups(round_id)")
+
+	// Add video_group_id column to questions if not exists
+	var vgCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('questions') WHERE name='video_group_id'").Scan(&vgCount)
+	if err != nil {
+		tx.Exec("ALTER TABLE questions ADD COLUMN video_group_id INTEGER REFERENCES video_groups(id) ON DELETE SET NULL")
+	} else if vgCount == 0 {
+		if _, err := tx.Exec("ALTER TABLE questions ADD COLUMN video_group_id INTEGER REFERENCES video_groups(id) ON DELETE SET NULL"); err != nil {
+			log.Printf("Warning: could not add video_group_id column: %v", err)
+		}
+	}
+
+	// Create index on questions(video_group_id)
+	tx.Exec("CREATE INDEX IF NOT EXISTS idx_questions_video_group_id ON questions(video_group_id)")
+
 	return tx.Commit()
 }
