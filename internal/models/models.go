@@ -25,6 +25,7 @@ type Question struct {
 	CorrectAnswer string
 	Options       sql.NullString
 	VideoFilename sql.NullString
+	ImageFilename sql.NullString
 	Points        int
 	OrderIndex    int
 }

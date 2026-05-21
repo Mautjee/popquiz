@@ -158,10 +158,10 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	if game.State == "question" && game.CurrentQuestionID.Valid {
 		var q models.Question
 		err = h.db.QueryRow(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 			FROM questions WHERE id = ?
 		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 		if err == nil && q.QuestionType == "multiple_choice" && q.Options.Valid {
 			mcOptions = parseMCOptions(q.Options.String)
 		}
@@ -188,10 +188,10 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	if game.State == "question" && game.CurrentQuestionID.Valid {
 		var q models.Question
 		err = h.db.QueryRow(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 			FROM questions WHERE id = ?
 		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 		if err == nil {
 			data["CurrentQuestion"] = q
 

@@ -97,15 +97,37 @@
 
         <!-- Questions -->
         {{if .Questions}}
-        <div class="space-y-3 mb-4">
+        <div id="questions-{{.Round.ID}}" class="space-y-3 mb-4">
             {{range .Questions}}
-            <div id="question-{{.ID}}" class="bg-gray-700 rounded p-3 flex justify-between items-center">
-                <div>
-                    <span class="text-gray-400 text-sm">{{.QuestionType}}</span>
-                    <p class="font-medium">{{.QuestionText}}</p>
-                    <p class="text-sm text-gray-400">Answer: {{.CorrectAnswer}} | Points: {{.Points}}</p>
-                    {{if .Options.Valid}}<p class="text-sm text-gray-400">Options: {{.Options.String}}</p>{{end}}
-                    {{if .VideoFilename.Valid}}<p class="text-sm text-purple-400">📹 {{.VideoFilename.String}}</p>{{end}}
+            <div id="question-{{.ID}}" class="question-row bg-gray-700 rounded p-3 flex justify-between items-center" 
+                 draggable="true" 
+                 data-question-id="{{.ID}}"
+                 ondragstart="dragStart(event)"
+                 ondragover="dragOver(event)"
+                 ondrop="drop(event, {{.RoundID}})">
+                <div class="flex items-center gap-2">
+                    <span class="text-gray-500 cursor-move" title="Drag to reorder">≡</span>
+                    <div>
+                        <span class="text-gray-400 text-sm">{{.QuestionType}}</span>
+                        <p class="font-medium">{{.QuestionText}}</p>
+                        <p class="text-sm text-gray-400">Answer: {{.CorrectAnswer}} | Points: {{.Points}}</p>
+                        {{if .Options.Valid}}<p class="text-sm text-gray-400">Options: {{.Options.String}}</p>{{end}}
+                        {{if .VideoFilename.Valid}}
+                        <div id="video-section-{{.ID}}" class="flex items-center gap-2 mt-1">
+                            <span class="text-sm text-purple-400">📹 {{.VideoFilename.String}}</span>
+                            <button hx-post="/admin/quiz/{{$.Quiz.ID}}/question/{{.ID}}/delete-video"
+                                    hx-target="#video-section-{{.ID}}"
+                                    hx-swap="outerHTML"
+                                    hx-confirm="Delete this video?"
+                                    class="text-red-400 hover:text-red-300 text-xs">🗑 Delete video</button>
+                        </div>
+                        {{end}}
+                        {{if .ImageFilename.Valid}}
+                        <div class="mt-1">
+                            <img src="/images/{{.ImageFilename.String}}" class="h-12 w-12 object-cover rounded inline-block">
+                        </div>
+                        {{end}}
+                    </div>
                 </div>
                 <div class="flex gap-2">
                     <button hx-get="/admin/quiz/{{$.Quiz.ID}}/question/{{.ID}}/edit"
@@ -137,6 +159,7 @@
                         <input type="text" name="question_text" required
                                class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
                     </div>
+                    {{if eq $.Quiz.Mode "online"}}
                     <div class="flex gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Type</label>
@@ -148,6 +171,9 @@
                             </select>
                         </div>
                     </div>
+                    {{else}}
+                    <input type="hidden" name="question_type" value="open">
+                    {{end}}
                     <!-- Multiple choice options -->
                     <div class="mc-options-fields" style="display:none;">
                         <label class="block text-sm font-medium text-gray-300 mb-2">Options</label>
@@ -196,6 +222,13 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-300 mb-1">Video Clip</label>
                         <input type="file" name="video_file" accept="video/*"
+                               class="w-full text-gray-300">
+                    </div>
+                    {{end}}
+                    {{if eq .Round.Type "text"}}
+                    <div>
+                        <label class="block text-sm font-medium text-gray-300 mb-1">Image (optional)</label>
+                        <input type="file" name="image_file" accept="image/*"
                                class="w-full text-gray-300">
                     </div>
                     {{end}}
@@ -254,6 +287,60 @@
                 alert('Correct answer is required');
                 return;
             }
+        }
+    });
+
+    // Drag-and-drop question reordering
+    let draggedElement = null;
+
+    function dragStart(e) {
+        draggedElement = e.target.closest('.question-row');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', '');
+        setTimeout(function() { if (draggedElement) draggedElement.style.opacity = '0.4'; }, 0);
+    }
+
+    function dragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        var target = e.target.closest('.question-row');
+        if (target && target !== draggedElement) {
+            var container = target.parentNode;
+            var allRows = Array.from(container.querySelectorAll('.question-row'));
+            var dragIdx = allRows.indexOf(draggedElement);
+            var targetIdx = allRows.indexOf(target);
+            if (dragIdx < targetIdx) {
+                container.insertBefore(draggedElement, target.nextSibling);
+            } else {
+                container.insertBefore(draggedElement, target);
+            }
+        }
+    }
+
+    function drop(e, roundID) {
+        e.preventDefault();
+        if (draggedElement) {
+            draggedElement.style.opacity = '1';
+        }
+        var container = document.getElementById('questions-' + roundID);
+        if (!container) return;
+        var questionIds = [];
+        container.querySelectorAll('.question-row').forEach(function(row) {
+            questionIds.push(row.getAttribute('data-question-id'));
+        });
+        // POST to reorder endpoint
+        var body = questionIds.map(function(id) { return 'question_ids=' + id; }).join('&');
+        fetch('/admin/round/' + roundID + '/reorder-questions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: body
+        });
+    }
+
+    document.addEventListener('dragend', function(e) {
+        if (draggedElement) {
+            draggedElement.style.opacity = '1';
+            draggedElement = null;
         }
     });
     </script>

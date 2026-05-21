@@ -55,6 +55,7 @@ func main() {
 	r.Handle("/static/*", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	// Video files served from data dir
 	r.Handle("/static/videos/*", http.StripPrefix("/static/videos/", http.FileServer(http.Dir(dataDir+"/videos"))))
+	r.Handle("/images/*", http.StripPrefix("/images/", http.FileServer(http.Dir(dataDir+"/images"))))
 
 	// Handler constructors
 	joinHandler := handlers.NewJoinHandler(database, broker, playerSessionSecret)
@@ -91,6 +92,11 @@ func main() {
 		r.Post("/quiz/{id}/question/{qid}", adminHandler.PostUpdateQuestion)
 		r.Delete("/quiz/{id}/question/{qid}", adminHandler.DeleteQuestionRoute)
 		r.Delete("/question/{id}", adminHandler.DeleteQuestion)
+		r.Post("/quiz/{id}/delete", adminHandler.PostDeleteQuiz)
+		r.Get("/quiz/{id}/delete-confirm", adminHandler.GetDeleteQuizConfirm)
+		r.Get("/quiz/{id}/row", adminHandler.GetQuizRow)
+		r.Post("/round/{id}/reorder-questions", adminHandler.PostReorderQuestions)
+		r.Post("/quiz/{id}/question/{qid}/delete-video", adminHandler.PostDeleteVideo)
 		r.Post("/quiz/{id}/game", adminHandler.PostCreateGame)
 		r.Get("/game/{code}", adminHandler.GetGamePanel)
 		r.Get("/game/{code}/events", adminHandler.GetGameEvents)

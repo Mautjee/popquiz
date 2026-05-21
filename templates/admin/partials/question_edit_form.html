@@ -1,14 +1,16 @@
 {{define "question_edit_form"}}
-<div id="question-{{.Question.ID}}" class="bg-gray-600 rounded p-4">
+<div id="question-{{.Question.ID}}" class="bg-gray-600 rounded p-4 question-row" draggable="true" data-question-id="{{.Question.ID}}">
     <form hx-post="/admin/quiz/{{.QuizID}}/question/{{.Question.ID}}"
           hx-target="#question-{{.Question.ID}}"
           hx-swap="outerHTML"
+          enctype="multipart/form-data"
           class="space-y-3">
         <div>
             <label class="block text-sm font-medium text-gray-300 mb-1">Question Text</label>
             <input type="text" name="question_text" required value="{{.Question.QuestionText}}"
                    class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent">
         </div>
+        {{if eq .QuizMode "online"}}
         <div class="flex gap-4">
             <div>
                 <label class="block text-sm font-medium text-gray-300 mb-1">Type</label>
@@ -19,6 +21,46 @@
                     <option value="multiple_choice" {{if eq .Question.QuestionType "multiple_choice"}}selected{{end}}>Multiple Choice</option>
                 </select>
             </div>
+        </div>
+        {{else}}
+        <input type="hidden" name="question_type" value="open">
+        {{end}}
+        <div id="video-section-{{.Question.ID}}">
+            {{if .Question.VideoFilename.Valid}}
+            <div class="flex items-center gap-2 mb-3">
+                <span class="text-sm text-purple-400">📹 {{.Question.VideoFilename.String}}</span>
+                <a href="/static/videos/{{.Question.VideoFilename.String}}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">▶ Preview</a>
+                <button type="button"
+                        hx-post="/admin/quiz/{{.QuizID}}/question/{{.Question.ID}}/delete-video"
+                        hx-target="#video-section-{{.Question.ID}}"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete this video?"
+                        class="text-red-400 hover:text-red-300 text-xs">🗑 Delete video</button>
+            </div>
+            <div class="mb-3">
+                <label class="block text-sm font-medium text-gray-300 mb-1">Replace Video</label>
+                <input type="file" name="video_file" accept="video/*" class="w-full text-gray-300 text-sm">
+            </div>
+            {{else}}
+            <div class="mb-3">
+                <label class="block text-sm font-medium text-gray-300 mb-1">Video Clip</label>
+                <input type="file" name="video_file" accept="video/*" class="w-full text-gray-300 text-sm">
+            </div>
+            {{end}}
+        </div>
+        <div class="mb-3">
+            <label class="block text-sm font-medium text-gray-300 mb-1">Image (optional)</label>
+            {{if .Question.ImageFilename.Valid}}
+            <div class="mb-2">
+                <img src="/images/{{.Question.ImageFilename.String}}" class="h-16 object-contain rounded inline-block">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Replace Image</label>
+                <input type="file" name="image_file" accept="image/*" class="w-full text-gray-300 text-sm">
+            </div>
+            {{else}}
+            <input type="file" name="image_file" accept="image/*" class="w-full text-gray-300 text-sm">
+            {{end}}
         </div>
         {{template "question_fields" .}}
         <div class="flex gap-2">
@@ -35,49 +77,13 @@
         </div>
     </form>
     <script>
-    // Initialize MC fields visibility on load
+    // Initialize MC fields visibility on load for edit forms loaded via HTMX
     (function() {
-        // Use the same toggleQuestionFields as quiz_editor
-        // The edit form is loaded via HTMX, so we need this script
-    })();
-    function toggleQuestionFields(select) {
-        var form = select.closest('form') || select.closest('div');
-        var mcFields = form.querySelector('.mc-options-fields');
-        var textField = form.querySelector('#correct-answer-text-field');
-        var mcField = form.querySelector('#correct-answer-mc-field');
-        if (select.value === 'multiple_choice') {
-            mcFields.style.display = 'block';
-            textField.style.display = 'none';
-            mcField.style.display = 'block';
-        } else {
-            mcFields.style.display = 'none';
-            textField.style.display = 'block';
-            mcField.style.display = 'none';
+        var typeSelect = document.querySelector('#question-{{.Question.ID}} .question-type-select');
+        if (typeSelect) {
+            toggleQuestionFields(typeSelect);
         }
-    }
-
-    // MC options serialization for HTMX form submit
-    document.querySelectorAll('form[hx-post]').forEach(function(form) {
-        form.addEventListener('htmx:configRequest', function(event) {
-            var typeSelect = form.querySelector('select[name="question_type"]');
-            if (typeSelect && typeSelect.value === 'multiple_choice') {
-                var inputs = form.querySelectorAll('.mc-option-input');
-                var options = [];
-                inputs.forEach(function(input) {
-                    options.push(input.value.trim());
-                });
-                var hiddenInput = form.querySelector('input[name="options"]');
-                if (hiddenInput) {
-                    hiddenInput.value = JSON.stringify(options);
-                }
-                var correctInput = form.querySelector('input[name="correct_answer"]');
-                var mcCorrect = form.querySelector('select[name="correct_answer_mc"]');
-                if (correctInput && mcCorrect) {
-                    correctInput.value = mcCorrect.value;
-                }
-            }
-        });
-    });
+    })();
     </script>
 </div>
 {{end}}
