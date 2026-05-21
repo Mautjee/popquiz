@@ -81,6 +81,7 @@ func migrate(db *sql.DB) error {
 			state TEXT NOT NULL DEFAULT 'lobby' CHECK(state IN ('lobby', 'question', 'round_reveal', 'ended')),
 			current_question_id INTEGER REFERENCES questions(id),
 			current_round_id INTEGER REFERENCES rounds(id),
+			show_question INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL DEFAULT (datetime('now'))
 		)`,
 		`CREATE TABLE IF NOT EXISTS teams (
@@ -93,7 +94,7 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS players (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			team_id INTEGER NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-			name TEXT NOT NULL,
+			name TEXT,
 			is_head INTEGER NOT NULL DEFAULT 0 CHECK(is_head IN (0, 1)),
 			last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
 			joined_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -138,6 +139,16 @@ func migrate(db *sql.DB) error {
 		if _, err := tx.Exec(idx); err != nil {
 			return fmt.Errorf("executing index: %s: %w", idx, err)
 		}
+	}
+
+	// Run alter migrations (these handle schema changes on existing DBs)
+	alterMigrations := []string{
+		// Add show_question column to games if not exists
+		`ALTER TABLE games ADD COLUMN show_question INTEGER NOT NULL DEFAULT 0`,
+	}
+	for _, m := range alterMigrations {
+		// Ignore errors if column already exists
+		tx.Exec(m)
 	}
 
 	return tx.Commit()

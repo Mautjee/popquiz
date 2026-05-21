@@ -67,6 +67,17 @@
 
         {{if eq .Game.State "ended"}}
         <p class="text-lg text-green-400 font-semibold">Game Over! 🎉</p>
+        <div class="flex gap-3 mt-3">
+            <form hx-post="/admin/game/{{.Code}}/reset" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/reset">
+                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition"
+                        onclick="return confirm('Reset this game? All answers will be deleted and scores reset to 0. Players will stay joined.')">
+                    🔄 Reset This Game
+                </button>
+            </form>
+            <a href="/admin/quiz/{{.Game.QuizID}}" class="py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white transition inline-block text-center">
+                🆕 New Game Session
+            </a>
+        </div>
         {{end}}
     </div>
 

@@ -5,11 +5,7 @@
     <p class="text-gray-400">The game will start soon. Hang tight!</p>
     <div id="team-members" class="mt-6">
         <h3 class="text-gray-300 text-sm font-semibold mb-2">Your Team</h3>
-        <ul class="text-gray-400 text-sm space-y-1">
-        {{range .Players}}
-            <li>{{.Name}}{{if .IsHead}} 👑{{end}}</li>
-        {{end}}
-        </ul>
+        <p class="text-gray-400 text-sm">{{len .Players}} player{{if ne (len .Players) 1}}s{{end}} in your team</p>
     </div>
 </div>
 
@@ -32,7 +28,7 @@
             Play Video
         </button>
     </div>
-    <div id="question-reveal" class="hidden">
+    <div id="question-reveal"{{if not .ShowQuestion}} class="hidden"{{end}}>
         {{template "answer_area" .}}
     </div>
     {{end}}

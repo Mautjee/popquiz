@@ -63,7 +63,10 @@ func main() {
 
 	// Public routes
 	r.Get("/", joinHandler.GetJoin)
-	r.Post("/join", joinHandler.PostJoin)
+	r.Post("/join/room", joinHandler.PostJoinRoom)
+	r.Get("/join/{code}", joinHandler.GetTeamSelect)
+	r.Post("/join/{code}/team", joinHandler.PostCreateTeam)
+	r.Post("/join/{code}/team/{teamId}", joinHandler.PostJoinTeam)
 	r.Get("/game/{code}", gameHandler.GetGame)
 	r.Get("/game/{code}/events", gameHandler.GetEvents)
 	r.Post("/game/{code}/answer", gameHandler.PostAnswer)
@@ -96,6 +99,7 @@ func main() {
 		r.Post("/game/{code}/show-question", adminHandler.PostShowQuestion)
 		r.Post("/game/{code}/mark", adminHandler.PostMark)
 		r.Post("/game/{code}/end-game", adminHandler.PostEndGame)
+		r.Post("/game/{code}/reset", adminHandler.PostResetGame)
 		r.Delete("/game/{code}/team/{id}", adminHandler.DeleteTeam)
 	})
 

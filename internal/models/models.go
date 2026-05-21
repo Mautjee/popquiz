@@ -35,6 +35,7 @@ type Game struct {
 	State            string // "lobby", "question", "round_reveal", "ended"
 	CurrentQuestionID sql.NullInt64
 	CurrentRoundID   sql.NullInt64
+	ShowQuestion     int
 	CreatedAt        string
 }
 
@@ -48,7 +49,7 @@ type Team struct {
 type Player struct {
 	ID         int64
 	TeamID     int64
-	Name       string
+	Name       sql.NullString
 	IsHead     int
 	LastSeenAt string
 	JoinedAt   string

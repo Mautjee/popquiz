@@ -13,21 +13,25 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/mundi/popquiz/internal/models"
 	"github.com/mundi/popquiz/internal/sse"
 )
 
 type JoinHandler struct {
-	db               *sql.DB
-	broker           *sse.Broker
-	sessionSecret    string
-	templates        *template.Template
+	db            *sql.DB
+	broker        *sse.Broker
+	sessionSecret string
+	templates     *template.Template
 }
 
 func NewJoinHandler(db *sql.DB, broker *sse.Broker, sessionSecret string) *JoinHandler {
-	tmpl := template.Must(template.ParseFiles(
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"ne": func(a, b interface{}) bool { return a != b },
+	}).ParseFiles(
 		"templates/base.html",
 		"templates/join.html",
+		"templates/team_select.html",
 	))
 	return &JoinHandler{
 		db:            db,
@@ -37,6 +41,7 @@ func NewJoinHandler(db *sql.DB, broker *sse.Broker, sessionSecret string) *JoinH
 	}
 }
 
+// GetJoin renders the room code entry page (step 1).
 func (h *JoinHandler) GetJoin(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	type pageData struct {
@@ -47,27 +52,20 @@ func (h *JoinHandler) GetJoin(w http.ResponseWriter, r *http.Request) {
 	h.templates.ExecuteTemplate(w, "join.html", data)
 }
 
-func (h *JoinHandler) PostJoin(w http.ResponseWriter, r *http.Request) {
+// PostJoinRoom handles the room code form submission, redirects to team selection.
+func (h *JoinHandler) PostJoinRoom(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
 		return
 	}
 
 	code := strings.ToUpper(strings.TrimSpace(r.FormValue("code")))
-	teamName := strings.TrimSpace(r.FormValue("team_name"))
-	playerName := strings.TrimSpace(r.FormValue("player_name"))
 
-	type pageData struct {
-		Code  string
-		Error string
-	}
-
-	if code == "" || teamName == "" || playerName == "" {
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "All fields are required"})
-		return
-	}
-
-	if len(code) != 6 {
+	if code == "" || len(code) != 6 {
+		type pageData struct {
+			Code  string
+			Error string
+		}
 		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "Room code must be 6 characters"})
 		return
 	}
@@ -75,79 +73,161 @@ func (h *JoinHandler) PostJoin(w http.ResponseWriter, r *http.Request) {
 	// Look up game by room code
 	var game models.Game
 	err := h.db.QueryRow(`
-		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
 		FROM games WHERE room_code = ?
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
-		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
 
 	if err == sql.ErrNoRows {
+		type pageData struct {
+			Code  string
+			Error string
+		}
 		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "Game not found"})
 		return
 	}
 	if err != nil {
 		log.Printf("Error looking up game: %v", err)
+		type pageData struct {
+			Code  string
+			Error string
+		}
 		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "An error occurred"})
 		return
 	}
 
 	if game.State == "ended" {
+		type pageData struct {
+			Code  string
+			Error string
+		}
 		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "Game has ended"})
 		return
 	}
 
-	// Check if joining is blocked during video question
-	if game.State == "question" && game.CurrentQuestionID.Valid {
-		var roundType string
-		err := h.db.QueryRow(`
-			SELECT r.type FROM rounds r
-			JOIN questions q ON q.round_id = r.id
-			WHERE q.id = ?
-		`, game.CurrentQuestionID.Int64).Scan(&roundType)
-		if err == nil && roundType == "video" {
-			h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "A video question is in progress. Please wait for the next question."})
-			return
-		}
-	}
+	// Redirect to team selection
+	http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
+}
 
-	// Find or create team
-	var teamID int64
-	var isHead int
+// TeamWithCount holds a team plus its player count for display.
+type TeamWithCount struct {
+	ID          int64
+	Name        string
+	PlayerCount int
+}
 
-	err = h.db.QueryRow("SELECT id FROM teams WHERE game_id = ? AND name = ?", game.ID, teamName).Scan(&teamID)
+// GetTeamSelect renders the team selection page (step 2).
+func (h *JoinHandler) GetTeamSelect(w http.ResponseWriter, r *http.Request) {
+	code := chiURLParam(r, "code")
+
+	// Look up game
+	var game models.Game
+	err := h.db.QueryRow(`
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
+		FROM games WHERE room_code = ?
+	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
+
 	if err == sql.ErrNoRows {
-		// Create new team — player becomes head
-		result, err := h.db.Exec("INSERT INTO teams (game_id, name, score) VALUES (?, ?, 0)", game.ID, teamName)
-		if err != nil {
-			log.Printf("Error creating team: %v", err)
-			h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "An error occurred"})
-			return
-		}
-		teamID, _ = result.LastInsertId()
-		isHead = 1
-	} else if err != nil {
-		log.Printf("Error looking up team: %v", err)
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "An error occurred"})
+		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
 		return
-	} else {
-		// Join existing team as member
-		isHead = 0
-
-		// Check if team has any members (if empty, promote joiner)
-		var memberCount int
-		h.db.QueryRow("SELECT COUNT(*) FROM players WHERE team_id = ?", teamID).Scan(&memberCount)
-		if memberCount == 0 {
-			isHead = 1
-		}
+	}
+	if err != nil {
+		log.Printf("Error looking up game: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
 	}
 
-	// Create player
+	if game.State == "ended" {
+		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		return
+	}
+
+	// Load teams for this game
+	rows, err := h.db.Query(`
+		SELECT t.id, t.name, COUNT(p.id) as player_count
+		FROM teams t
+		LEFT JOIN players p ON p.team_id = t.id
+		WHERE t.game_id = ?
+		GROUP BY t.id
+		ORDER BY t.name
+	`, game.ID)
+	if err != nil {
+		log.Printf("Error loading teams: %v", err)
+		http.Error(w, "Error loading teams", http.StatusInternalServerError)
+		return
+	}
+	defer rows.Close()
+
+	var teams []TeamWithCount
+	for rows.Next() {
+		var t TeamWithCount
+		rows.Scan(&t.ID, &t.Name, &t.PlayerCount)
+		teams = append(teams, t)
+	}
+
+	type pageData struct {
+		Code  string
+		Teams []TeamWithCount
+		Error string
+	}
+
+	data := pageData{Code: code, Teams: teams}
+	h.templates.ExecuteTemplate(w, "team_select.html", data)
+}
+
+// PostJoinTeam handles joining an existing team.
+func (h *JoinHandler) PostJoinTeam(w http.ResponseWriter, r *http.Request) {
+	code := chiURLParam(r, "code")
+	teamIDStr := chiURLParam(r, "teamId")
+	teamID, err := strconv.ParseInt(teamIDStr, 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid team ID", http.StatusBadRequest)
+		return
+	}
+
+	// Verify game exists and is not ended
+	var game models.Game
+	err = h.db.QueryRow(`
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
+		FROM games WHERE room_code = ?
+	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
+	if err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if game.State == "ended" {
+		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		return
+	}
+
+	// Verify team belongs to this game
+	var teamGameID int64
+	err = h.db.QueryRow("SELECT game_id FROM teams WHERE id = ?", teamID).Scan(&teamGameID)
+	if err != nil || teamGameID != game.ID {
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
+		return
+	}
+
+	// Check if team already has members — first joiner becomes head
+	isHead := 0
+	var memberCount int
+	h.db.QueryRow("SELECT COUNT(*) FROM players WHERE team_id = ?", teamID).Scan(&memberCount)
+	if memberCount == 0 {
+		isHead = 1
+	}
+
+	// Create player (auto-named)
+	playerName := ""
 	result, err := h.db.Exec(
 		"INSERT INTO players (team_id, name, is_head, last_seen_at, joined_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
 		teamID, playerName, isHead,
 	)
 	if err != nil {
 		log.Printf("Error creating player: %v", err)
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "An error occurred"})
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
 		return
 	}
 	playerID, _ := result.LastInsertId()
@@ -164,16 +244,105 @@ func (h *JoinHandler) PostJoin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	// Notify via SSE
-	teamNameForEvent := teamName
+	teamNameForEvent := ""
+	h.db.QueryRow("SELECT name FROM teams WHERE id = ?", teamID).Scan(&teamNameForEvent)
 	isHeadStr := "0"
 	if isHead == 1 {
 		isHeadStr = "1"
 	}
-	eventData := fmt.Sprintf(`{"team_name":"%s","player_name":"%s","is_head":%s}`, teamNameForEvent, playerName, isHeadStr)
+	eventData := fmt.Sprintf(`{"team_name":"%s","is_head":%s}`, teamNameForEvent, isHeadStr)
 	h.broker.Publish(code, sse.Event{Type: "player_joined", Data: eventData})
 	h.broker.Publish("admin:"+code, sse.Event{Type: "player_joined", Data: eventData})
 
 	http.Redirect(w, r, "/game/"+code, http.StatusSeeOther)
+}
+
+// PostCreateTeam handles creating a new team and joining it.
+func (h *JoinHandler) PostCreateTeam(w http.ResponseWriter, r *http.Request) {
+	code := chiURLParam(r, "code")
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	teamName := strings.TrimSpace(r.FormValue("team_name"))
+	if teamName == "" {
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
+		return
+	}
+
+	// Verify game exists and is not ended
+	var game models.Game
+	err := h.db.QueryRow(`
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
+		FROM games WHERE room_code = ?
+	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
+	if err != nil {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if game.State == "ended" {
+		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		return
+	}
+
+	// Check if team name already exists for this game
+	var existingID int64
+	err = h.db.QueryRow("SELECT id FROM teams WHERE game_id = ? AND name = ?", game.ID, teamName).Scan(&existingID)
+	if err == nil {
+		// Team name already taken — redirect back to team select with error
+		// Just redirect; the user can see the team and join it
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
+		return
+	}
+
+	// Create new team — player becomes head
+	result, err := h.db.Exec("INSERT INTO teams (game_id, name, score) VALUES (?, ?, 0)", game.ID, teamName)
+	if err != nil {
+		log.Printf("Error creating team: %v", err)
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
+		return
+	}
+	teamID, _ := result.LastInsertId()
+
+	// Create player as head of new team
+	playerName := ""
+	playerResult, err := h.db.Exec(
+		"INSERT INTO players (team_id, name, is_head, last_seen_at, joined_at) VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+		teamID, playerName, 1,
+	)
+	if err != nil {
+		log.Printf("Error creating player: %v", err)
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
+		return
+	}
+	playerID, _ := playerResult.LastInsertId()
+
+	// Set signed player session cookie
+	cookieValue := signPlayerSession(playerID, teamID, h.sessionSecret)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "player_session",
+		Value:    cookieValue,
+		Path:     "/",
+		HttpOnly: true,
+		MaxAge:   86400 * 7, // 7 days
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	// Notify via SSE
+	eventData := fmt.Sprintf(`{"team_name":"%s","is_head":1}`, teamName)
+	h.broker.Publish(code, sse.Event{Type: "player_joined", Data: eventData})
+	h.broker.Publish("admin:"+code, sse.Event{Type: "player_joined", Data: eventData})
+
+	http.Redirect(w, r, "/game/"+code, http.StatusSeeOther)
+}
+
+// Helper to extract URL param
+func chiURLParam(r *http.Request, key string) string {
+	return chi.URLParam(r, key)
 }
 
 func signPlayerSession(playerID, teamID int64, secret string) string {
