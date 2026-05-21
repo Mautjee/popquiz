@@ -400,7 +400,20 @@ Header: team name + 👑 if head + round name
 
 ---
 
-## 12. Tech Stack
+## 12. Persistence Strategy
+
+SQLite with a persistent Docker volume. Rationale:
+- Expected load (~25 players) is well within SQLite's capability
+- Single binary — no second service to manage or fail
+- A named Docker volume mounted at /app/data survives container restarts and redeploys
+- Data backed up by copying a single file
+- Upgrade to Postgres only if multi-instance horizontal scaling is ever needed (not planned for v1)
+
+Volume mount in Dokploy: named volume → /app/data inside the container.
+
+---
+
+## 13. Tech Stack
 
 | Layer    | Choice |
 |----------|--------|
