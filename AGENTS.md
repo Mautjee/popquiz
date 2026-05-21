@@ -2,6 +2,7 @@
 <!-- SPECKIT START -->
 For additional context about technologies, project structure, shell commands,
 and other important information, read SPEC.md before writing any code.
+Implementation plan: specs/001-popquiz-live-quiz/plan.md
 <!-- SPECKIT END -->
 
 ## Project Overview
@@ -24,7 +25,7 @@ Full spec: SPEC.md
 ## Tech Stack
 
 - Go 1.22+ with github.com/go-chi/chi/v5 router
-- SQLite via github.com/mattn/go-sqlite3 (requires CGO — always build with CGO_ENABLED=1)
+- SQLite via modernc.org/sqlite (pure Go, no CGO required)
 - html/template for server-side rendering
 - HTMX 2.x via CDN (no npm build step)
 - Tailwind CSS via CDN (no npm build step)

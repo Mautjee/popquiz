@@ -419,7 +419,7 @@ Volume mount in Dokploy: named volume → /app/data inside the container.
 |----------|--------|
 | Language | Go 1.22+ |
 | Router   | github.com/go-chi/chi/v5 |
-| DB       | SQLite via github.com/mattn/go-sqlite3 |
+| DB       | SQLite via modernc.org/sqlite |
 | Templates| html/template |
 | Frontend | HTMX 2.x via CDN |
 | Styling  | Tailwind CSS via CDN |
