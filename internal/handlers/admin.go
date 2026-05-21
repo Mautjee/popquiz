@@ -27,31 +27,43 @@ type AdminHandler struct {
 	adminPassword string
 	sessionSecret string
 	dataDir       string
-	templates     *template.Template
 }
 
 func NewAdminHandler(db *sql.DB, broker *sse.Broker, adminPassword, sessionSecret, dataDir string) *AdminHandler {
-	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
-		"json": func(v interface{}) string {
-			b, _ := json.Marshal(v)
-			return string(b)
-		},
-	}).ParseFiles(
-		"templates/base.html",
-		"templates/admin/login.html",
-		"templates/admin/index.html",
-		"templates/admin/quiz_editor.html",
-		"templates/admin/game_panel.html",
-		"templates/admin/partials/game_panel_game_state.html",
-		"templates/admin/partials/game_panel_teams.html",
-	))
 	return &AdminHandler{
 		db:            db,
 		broker:        broker,
 		adminPassword: adminPassword,
 		sessionSecret: sessionSecret,
 		dataDir:       dataDir,
-		templates:     tmpl,
+	}
+}
+
+// render parses base.html + the given page files fresh each call, preventing
+// {{define "content"}} conflicts when multiple pages share the same template set.
+func (h *AdminHandler) render(w http.ResponseWriter, data interface{}, name string, files ...string) {
+	allFiles := append([]string{"templates/base.html"}, files...)
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"json": func(v interface{}) string {
+			b, _ := json.Marshal(v)
+			return string(b)
+		},
+	}).ParseFiles(allFiles...))
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("render error (%s): %v", name, err)
+	}
+}
+
+// renderPartial parses partial templates without base.html.
+func (h *AdminHandler) renderPartial(w http.ResponseWriter, data interface{}, name string, files ...string) {
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"json": func(v interface{}) string {
+			b, _ := json.Marshal(v)
+			return string(b)
+		},
+	}).ParseFiles(files...))
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("renderPartial error (%s): %v", name, err)
 	}
 }
 
@@ -101,7 +113,7 @@ func (h *AdminHandler) GetLogin(w http.ResponseWriter, r *http.Request) {
 	type pageData struct {
 		Error string
 	}
-	h.templates.ExecuteTemplate(w, "login.html", pageData{})
+	h.render(w, pageData{}, "login.html", "templates/admin/login.html")
 }
 
 func (h *AdminHandler) PostLogin(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +128,7 @@ func (h *AdminHandler) PostLogin(w http.ResponseWriter, r *http.Request) {
 		type pageData struct {
 			Error string
 		}
-		h.templates.ExecuteTemplate(w, "login.html", pageData{Error: "Incorrect password"})
+		h.render(w, pageData{Error: "Incorrect password"}, "login.html", "templates/admin/login.html")
 		return
 	}
 
@@ -163,18 +175,18 @@ func (h *AdminHandler) GetIndex(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Quizzes": quizzes,
 	}
-	h.templates.ExecuteTemplate(w, "index.html", data)
+	h.render(w, data, "index.html", "templates/admin/index.html")
 }
 
 // --- Quiz CRUD ---
 
 func (h *AdminHandler) GetQuizNew(w http.ResponseWriter, r *http.Request) {
-	h.templates.ExecuteTemplate(w, "quiz_editor.html", map[string]interface{}{
+	h.render(w, map[string]interface{}{
 		"Quiz":    nil,
 		"Rounds":  nil,
 		"IsNew":   true,
 		"Game":    nil,
-	})
+	}, "quiz_editor.html", "templates/admin/quiz_editor.html")
 }
 
 func (h *AdminHandler) PostQuiz(w http.ResponseWriter, r *http.Request) {
@@ -274,7 +286,7 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 		data["Game"] = game
 	}
 
-	h.templates.ExecuteTemplate(w, "quiz_editor.html", data)
+	h.render(w, data, "quiz_editor.html", "templates/admin/quiz_editor.html")
 }
 
 func (h *AdminHandler) PostRound(w http.ResponseWriter, r *http.Request) {
@@ -593,7 +605,7 @@ func (h *AdminHandler) GetGamePanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.templates.ExecuteTemplate(w, "game_panel.html", data)
+	h.render(w, data, "game_panel.html", "templates/admin/game_panel.html", "templates/admin/partials/game_panel_game_state.html", "templates/admin/partials/game_panel_teams.html")
 }
 
 // GetGamePanelPartial returns just the game state panel fragment for HTMX updates.
@@ -607,7 +619,7 @@ func (h *AdminHandler) GetGamePanelPartial(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	h.templates.ExecuteTemplate(w, "game_panel_game_state", data)
+	h.renderPartial(w, data, "game_panel_game_state", "templates/admin/partials/game_panel_game_state.html")
 }
 
 // GetAdminTeamsList returns just the teams list fragment for HTMX updates.
@@ -621,7 +633,7 @@ func (h *AdminHandler) GetAdminTeamsList(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	h.templates.ExecuteTemplate(w, "game_panel_teams", data)
+	h.renderPartial(w, data, "game_panel_teams", "templates/admin/partials/game_panel_teams.html")
 }
 
 func (h *AdminHandler) GetGameEvents(w http.ResponseWriter, r *http.Request) {
@@ -652,7 +664,7 @@ func (h *AdminHandler) renderGamePanelPartial(w http.ResponseWriter, code string
 		return
 	}
 	w.Header().Set("Content-Type", "text/html")
-	h.templates.ExecuteTemplate(w, "game_panel_game_state", data)
+	h.renderPartial(w, data, "game_panel_game_state", "templates/admin/partials/game_panel_game_state.html")
 }
 
 func (h *AdminHandler) PostStartRound(w http.ResponseWriter, r *http.Request) {

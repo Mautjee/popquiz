@@ -19,28 +19,40 @@ type GameHandler struct {
 	db            *sql.DB
 	broker        *sse.Broker
 	sessionSecret string
-	templates     *template.Template
 }
 
 func NewGameHandler(db *sql.DB, broker *sse.Broker, sessionSecret string) *GameHandler {
+	return &GameHandler{
+		db:            db,
+		broker:        broker,
+		sessionSecret: sessionSecret,
+	}
+}
+
+func (h *GameHandler) render(w http.ResponseWriter, data interface{}, name string, files ...string) {
+	allFiles := append([]string{"templates/base.html"}, files...)
 	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
 		"add": func(a, b int) int { return a + b },
 		"json": func(v interface{}) string {
 			b, _ := json.Marshal(v)
 			return string(b)
 		},
-	}).ParseFiles(
-		"templates/base.html",
-		"templates/game/player.html",
-		"templates/game/results.html",
-		"templates/game/partials/answer_area.html",
-		"templates/game/partials/game_state_content.html",
-	))
-	return &GameHandler{
-		db:            db,
-		broker:        broker,
-		sessionSecret: sessionSecret,
-		templates:     tmpl,
+	}).ParseFiles(allFiles...))
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("render error (%s): %v", name, err)
+	}
+}
+
+func (h *GameHandler) renderPartial(w http.ResponseWriter, data interface{}, name string, files ...string) {
+	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+		"add": func(a, b int) int { return a + b },
+		"json": func(v interface{}) string {
+			b, _ := json.Marshal(v)
+			return string(b)
+		},
+	}).ParseFiles(files...))
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("renderPartial error (%s): %v", name, err)
 	}
 }
 
@@ -232,7 +244,7 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.templates.ExecuteTemplate(w, "player.html", data)
+	h.render(w, data, "player.html", "templates/game/player.html", "templates/game/partials/answer_area.html", "templates/game/partials/game_state_content.html")
 }
 
 // GetGamePartial returns just the game state content fragment for HTMX updates.
@@ -252,7 +264,7 @@ func (h *GameHandler) GetGamePartial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	h.templates.ExecuteTemplate(w, "game_state_content", data)
+	h.renderPartial(w, data, "game_state_content", "templates/game/partials/game_state_content.html", "templates/game/partials/answer_area.html")
 }
 
 // GetPlayerTeamInfo returns the team header fragment for HTMX updates.
@@ -407,7 +419,7 @@ func (h *GameHandler) PostAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	h.templates.ExecuteTemplate(w, "answer_area", data)
+	h.renderPartial(w, data, "answer_area", "templates/game/partials/answer_area.html")
 }
 
 func (h *GameHandler) GetResults(w http.ResponseWriter, r *http.Request) {
@@ -452,5 +464,5 @@ func (h *GameHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 		"Code":    code,
 	}
 
-	h.templates.ExecuteTemplate(w, "results.html", data)
+	h.render(w, data, "results.html", "templates/game/results.html")
 }
