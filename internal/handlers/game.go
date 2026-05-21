@@ -15,6 +15,27 @@ import (
 	"github.com/mundi/popquiz/internal/sse"
 )
 
+// MCOpt represents a parsed multiple choice option for template rendering.
+type MCOpt struct {
+	Letter string
+	Text   string
+}
+
+func parseMCOptions(jsonStr string) []MCOpt {
+	var opts []string
+	if err := json.Unmarshal([]byte(jsonStr), &opts); err != nil {
+		return nil
+	}
+	letters := []string{"A", "B", "C", "D"}
+	var result []MCOpt
+	for i, opt := range opts {
+		if i < len(letters) {
+			result = append(result, MCOpt{Letter: letters[i], Text: opt})
+		}
+	}
+	return result
+}
+
 type GameHandler struct {
 	db            *sql.DB
 	broker        *sse.Broker
@@ -132,6 +153,20 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 		players = []PlayerInfo{}
 	}
 
+	// Parse MC options for template rendering
+	mcOptions := []MCOpt{}
+	if game.State == "question" && game.CurrentQuestionID.Valid {
+		var q models.Question
+		err = h.db.QueryRow(`
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			FROM questions WHERE id = ?
+		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+		if err == nil && q.QuestionType == "multiple_choice" && q.Options.Valid {
+			mcOptions = parseMCOptions(q.Options.String)
+		}
+	}
+
 	data := map[string]interface{}{
 		"Game":         game,
 		"Player":      player,
@@ -140,7 +175,8 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 		"IsHead":      player.IsHead == 1,
 		"HeadIcon":    "👑",
 		"Players":     players,
-		"ShowQuestion": game.ShowQuestion == 1, // For video questions: true = reveal question text+answer input
+		"ShowQuestion": game.ShowQuestion == 1,
+		"MCOptions":   mcOptions,
 	}
 
 	// Load round and question info if in question state
@@ -153,6 +189,13 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
 		if err == nil {
 			data["CurrentQuestion"] = q
+
+			// Parse MC options for this question
+			if q.QuestionType == "multiple_choice" && q.Options.Valid {
+				data["MCOptions"] = parseMCOptions(q.Options.String)
+			} else {
+				data["MCOptions"] = []MCOpt{}
+			}
 
 			// Determine question number within round
 			var orderIdx int
@@ -259,7 +302,7 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.render(w, data, "player.html", "templates/game/player.html", "templates/game/partials/answer_area.html", "templates/game/partials/game_state_content.html")
+	h.render(w, data, "player.html", "templates/game/player.html", "templates/game/partials/answer_area.html", "templates/game/partials/game_state_content.html", "templates/game/partials/team_header.html")
 }
 
 // GetGamePartial returns just the game state content fragment for HTMX updates.
@@ -292,43 +335,14 @@ func (h *GameHandler) GetPlayerTeamInfo(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var player models.Player
-	err := h.db.QueryRow(`
-		SELECT id, team_id, name, is_head, last_seen_at, joined_at
-		FROM players WHERE id = ?
-	`, playerID).Scan(&player.ID, &player.TeamID, &player.Name, &player.IsHead, &player.LastSeenAt, &player.JoinedAt)
+	data, err := h.buildPlayerData(code, playerID, teamID)
 	if err != nil {
 		http.Error(w, "player not found", http.StatusNotFound)
 		return
 	}
 
-	var team models.Team
-	err = h.db.QueryRow("SELECT id, game_id, name, score FROM teams WHERE id = ?", teamID).Scan(&team.ID, &team.GameID, &team.Name, &team.Score)
-	if err != nil {
-		http.Error(w, "team not found", http.StatusNotFound)
-		return
-	}
-
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `<div id="team-header" class="flex justify-between items-center mb-6">
-    <div>
-        <h1 class="text-2xl font-bold text-indigo-400">%s</h1>
-        %s
-    </div>
-    <div class="text-right">
-        <p class="text-gray-400 text-sm">Room Code</p>
-        <p class="text-2xl font-mono font-bold text-green-400">%s</p>
-    </div>
-</div>`,
-		template.HTMLEscapeString(team.Name),
-		template.HTMLEscapeString(func() string {
-			if player.IsHead == 1 {
-				return `<p class="text-yellow-400 text-sm">👑 You are submitting</p>`
-			}
-			return `<p class="text-gray-400 text-sm">Watching</p>`
-		}()),
-		template.HTMLEscapeString(code),
-	)
+	h.renderPartial(w, data, "team_header", "templates/game/partials/team_header.html")
 }
 
 func (h *GameHandler) GetEvents(w http.ResponseWriter, r *http.Request) {
@@ -404,6 +418,18 @@ func (h *GameHandler) PostAnswer(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error upserting answer: %v", err)
 		http.Error(w, "Error submitting answer", http.StatusInternalServerError)
 		return
+	}
+
+	// Auto-score multiple choice answers at submission time
+	var qType string
+	var correctAnswer string
+	h.db.QueryRow("SELECT question_type, correct_answer FROM questions WHERE id = ?", questionID).Scan(&qType, &correctAnswer)
+	if qType == "multiple_choice" {
+		isCorrect := 0
+		if strings.EqualFold(strings.TrimSpace(answerText), strings.TrimSpace(correctAnswer)) {
+			isCorrect = 1
+		}
+		h.db.Exec("UPDATE answers SET is_correct = ? WHERE team_id = ? AND question_id = ?", isCorrect, teamID, questionID)
 	}
 
 	// Publish answer_accepted event to the player

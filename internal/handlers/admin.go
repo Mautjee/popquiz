@@ -469,6 +469,173 @@ func (h *AdminHandler) DeleteQuestion(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, fmt.Sprintf("/admin/quiz/%d", quizID), http.StatusSeeOther)
 }
 
+// GetEditQuestion returns an inline edit form partial for a question.
+func (h *AdminHandler) GetEditQuestion(w http.ResponseWriter, r *http.Request) {
+	questionID, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid question ID", http.StatusBadRequest)
+		return
+	}
+
+	var q models.Question
+	err = h.db.QueryRow(`
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		FROM questions WHERE id = ?
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+	if err != nil {
+		http.Error(w, "Question not found", http.StatusNotFound)
+		return
+	}
+
+	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid quiz ID", http.StatusBadRequest)
+		return
+	}
+
+	// Parse MC options
+	mcOpts := parseAdminMCOptions(q.Options)
+
+	data := map[string]interface{}{
+		"Question": q,
+		"QuizID":  quizID,
+		"MCOptions": mcOpts,
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.renderPartial(w, data, "question_edit_form", "templates/admin/partials/question_edit_form.html", "templates/admin/partials/question_fields.html")
+}
+
+// GetQuestionRow returns a question row partial (for HTMX cancel).
+func (h *AdminHandler) GetQuestionRow(w http.ResponseWriter, r *http.Request) {
+	questionID, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid question ID", http.StatusBadRequest)
+		return
+	}
+
+	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid quiz ID", http.StatusBadRequest)
+		return
+	}
+
+	var q models.Question
+	err = h.db.QueryRow(`
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		FROM questions WHERE id = ?
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+	if err != nil {
+		http.Error(w, "Question not found", http.StatusNotFound)
+		return
+	}
+
+	type RowData struct {
+		Question models.Question
+		QuizID   int64
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.renderPartial(w, RowData{Question: q, QuizID: quizID}, "question_row", "templates/admin/partials/question_row.html")
+}
+
+// PostUpdateQuestion updates a question and returns the updated row partial.
+func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request) {
+	questionID, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid question ID", http.StatusBadRequest)
+		return
+	}
+
+	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid quiz ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	questionText := strings.TrimSpace(r.FormValue("question_text"))
+	questionType := r.FormValue("question_type")
+	correctAnswer := strings.TrimSpace(r.FormValue("correct_answer"))
+	pointsStr := r.FormValue("points")
+	options := r.FormValue("options")
+
+	// For MC questions, the correct_answer may come from correct_answer_mc
+	if questionType == "multiple_choice" && correctAnswer == "" {
+		correctAnswer = r.FormValue("correct_answer_mc")
+	}
+
+	points := 1
+	if pointsStr != "" {
+		if p, err := strconv.Atoi(pointsStr); err == nil && p > 0 {
+			points = p
+		}
+	}
+
+	if questionText == "" || correctAnswer == "" {
+		http.Error(w, "Question text and correct answer required", http.StatusUnprocessableEntity)
+		return
+	}
+
+	var optionsJSON sql.NullString
+	if questionType == "multiple_choice" && options != "" {
+		optionsJSON = sql.NullString{String: options, Valid: true}
+	}
+
+	_, err = h.db.Exec(`
+		UPDATE questions SET question_text = ?, question_type = ?, correct_answer = ?, options = ?, points = ?
+		WHERE id = ?
+	`, questionText, questionType, correctAnswer, optionsJSON, points, questionID)
+	if err != nil {
+		log.Printf("Error updating question: %v", err)
+		http.Error(w, "Error updating question", http.StatusInternalServerError)
+		return
+	}
+
+	// Return the updated question row
+	var q models.Question
+	h.db.QueryRow(`
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		FROM questions WHERE id = ?
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+
+	type RowData struct {
+		Question models.Question
+		QuizID   int64
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.renderPartial(w, RowData{Question: q, QuizID: quizID}, "question_row", "templates/admin/partials/question_row.html")
+}
+func (h *AdminHandler) DeleteQuestionRoute(w http.ResponseWriter, r *http.Request) {
+	questionID, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid question ID", http.StatusBadRequest)
+		return
+	}
+
+	// Delete video file if exists
+	var videoFilename sql.NullString
+	h.db.QueryRow("SELECT video_filename FROM questions WHERE id = ?", questionID).Scan(&videoFilename)
+	if videoFilename.Valid && videoFilename.String != "" {
+		videoPath := filepath.Join(h.dataDir, "videos", videoFilename.String)
+		os.Remove(videoPath)
+	}
+
+	_, err = h.db.Exec("DELETE FROM questions WHERE id = ?", questionID)
+	if err != nil {
+		log.Printf("Error deleting question: %v", err)
+		http.Error(w, "Error deleting question", http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 func (h *AdminHandler) PostCreateGame(w http.ResponseWriter, r *http.Request) {
 	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
 	if err != nil {
@@ -607,6 +774,24 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 		rwq = append(rwq, RoundWithQuestions{Round: rd, Questions: questions})
 	}
 	data["RoundsWithQuestions"] = rwq
+
+	// ShowQuestion for greying out the button
+	data["ShowQuestion"] = game.ShowQuestion == 1
+
+	// HasNextQuestion for greying out the Next Question button
+	hasNextQuestion := false
+	if game.State == "question" && game.CurrentQuestionID.Valid && game.CurrentRoundID.Valid {
+		var nextQID int64
+		err = h.db.QueryRow(`
+			SELECT id FROM questions WHERE round_id = ? AND order_index > (
+				SELECT order_index FROM questions WHERE id = ?
+			) ORDER BY order_index LIMIT 1
+		`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(&nextQID)
+		if err == nil {
+			hasNextQuestion = true
+		}
+	}
+	data["HasNextQuestion"] = hasNextQuestion
 
 	return data, nil
 }
@@ -831,6 +1016,9 @@ func (h *AdminHandler) PostEndRound(w http.ResponseWriter, r *http.Request) {
 
 	// Publish round_reveal with all questions and answers
 	publishRoundReveal(h.db, h.broker, game)
+
+	// Publish score_update so players see updated scores
+	publishScoreUpdate(h.db, h.broker, game)
 
 	// Return updated game state panel
 	h.renderGamePanelPartial(w, code)
@@ -1063,6 +1251,210 @@ func (h *AdminHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 
 	// Return 200 OK with empty body for HTMX to remove the row
 	w.WriteHeader(http.StatusOK)
+}
+
+// --- Answer Review Handlers ---
+
+// QuestionAnswers holds a question and its answers for the review page.
+type QuestionAnswers struct {
+	Question models.Question
+	Answers  []AnswerRow
+}
+
+// AnswerRow holds a single answer with team info for display.
+type AnswerRow struct {
+	AnswerID     int64
+	TeamName     string
+	AnswerText   string
+	IsCorrect    sql.NullInt64
+	HostApproved sql.NullInt64
+	QuestionType string
+	Points      int
+	GameCode    string
+}
+
+// GetAnswerReview shows all answers for all questions in the current round.
+func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	game, err := h.getGame(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	if !game.CurrentRoundID.Valid {
+		http.Error(w, "No current round", http.StatusUnprocessableEntity)
+		return
+	}
+
+	// Load questions for this round
+	qRows, err := h.db.Query(`
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		FROM questions WHERE round_id = ? ORDER BY order_index
+	`, game.CurrentRoundID.Int64)
+	if err != nil {
+		http.Error(w, "Error loading questions", http.StatusInternalServerError)
+		return
+	}
+	var questions []models.Question
+	for qRows.Next() {
+		var q models.Question
+		qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+		questions = append(questions, q)
+	}
+	qRows.Close()
+
+	// Load answers for each question
+	var qaList []QuestionAnswers
+	for _, q := range questions {
+		aRows, err := h.db.Query(`
+			SELECT a.id, t.name, a.answer_text, a.is_correct, a.host_approved, q.question_type, q.points
+			FROM answers a
+			JOIN teams t ON a.team_id = t.id
+			JOIN questions q ON a.question_id = q.id
+			WHERE a.question_id = ?
+			ORDER BY t.name
+		`, q.ID)
+		if err != nil {
+			qaList = append(qaList, QuestionAnswers{Question: q})
+			continue
+		}
+		var answers []AnswerRow
+		for aRows.Next() {
+			var ar AnswerRow
+			aRows.Scan(&ar.AnswerID, &ar.TeamName, &ar.AnswerText, &ar.IsCorrect, &ar.HostApproved, &ar.QuestionType, &ar.Points)
+			ar.GameCode = code
+			answers = append(answers, ar)
+		}
+		aRows.Close()
+		qaList = append(qaList, QuestionAnswers{Question: q, Answers: answers})
+	}
+
+	// Load round name
+	var roundName string
+	h.db.QueryRow("SELECT name FROM rounds WHERE id = ?", game.CurrentRoundID.Int64).Scan(&roundName)
+
+	var quiz models.Quiz
+	h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+
+	data := map[string]interface{}{
+		"Game":           game,
+		"Quiz":           quiz,
+		"Code":           code,
+		"RoundName":      roundName,
+		"QuestionAnswers": qaList,
+	}
+
+	h.render(w, data, "answer_review.html", "templates/admin/answer_review.html", "templates/admin/partials/answer_row.html")
+}
+
+// PostApproveAnswer approves an open answer (sets is_correct=1, host_approved=1, scores it).
+func (h *AdminHandler) PostApproveAnswer(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	game, err := h.getGame(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	answerID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid answer ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get question type and points
+	var questionID int64
+	var teamID int64
+	var points int
+	err = h.db.QueryRow(`
+		SELECT a.question_id, a.team_id, q.points
+		FROM answers a
+		JOIN questions q ON a.question_id = q.id
+		WHERE a.id = ?
+	`, answerID).Scan(&questionID, &teamID, &points)
+	if err != nil {
+		http.Error(w, "Answer not found", http.StatusNotFound)
+		return
+	}
+
+	// Mark answer as approved
+	_, err = h.db.Exec(`
+		UPDATE answers SET is_correct = 1, host_approved = 1, scored_at = datetime('now')
+		WHERE id = ?
+	`, answerID)
+	if err != nil {
+		http.Error(w, "Error approving answer", http.StatusInternalServerError)
+		return
+	}
+
+	// Add points to team score
+	_, err = h.db.Exec("UPDATE teams SET score = score + ? WHERE id = ?", points, teamID)
+	if err != nil {
+		log.Printf("Error updating team score: %v", err)
+	}
+
+	// Broadcast score_update
+	publishScoreUpdate(h.db, h.broker, game)
+
+	// Return updated answer row partial
+	h.renderAnswerRow(w, answerID)
+}
+
+// PostDenyAnswer denies an open answer (sets is_correct=0, host_approved=0).
+func (h *AdminHandler) PostDenyAnswer(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	_, err := h.getGame(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	answerID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid answer ID", http.StatusBadRequest)
+		return
+	}
+
+	// Mark answer as denied
+	_, err = h.db.Exec(`
+		UPDATE answers SET is_correct = 0, host_approved = 0
+		WHERE id = ?
+	`, answerID)
+	if err != nil {
+		http.Error(w, "Error denying answer", http.StatusInternalServerError)
+		return
+	}
+
+	// Return updated answer row partial
+	h.renderAnswerRow(w, answerID)
+}
+
+// renderAnswerRow renders a single answer row for HTMX swap.
+func (h *AdminHandler) renderAnswerRow(w http.ResponseWriter, answerID int64) {
+	var ar AnswerRow
+	err := h.db.QueryRow(`
+		SELECT a.id, t.name, a.answer_text, a.is_correct, a.host_approved, q.question_type, q.points
+		FROM answers a
+		JOIN teams t ON a.team_id = t.id
+		JOIN questions q ON a.question_id = q.id
+		WHERE a.id = ?
+	`, answerID).Scan(&ar.AnswerID, &ar.TeamName, &ar.AnswerText, &ar.IsCorrect, &ar.HostApproved, &ar.QuestionType, &ar.Points)
+	if err != nil {
+		http.Error(w, "Answer not found", http.StatusNotFound)
+		return
+	}
+
+	// We need game code for HTMX URLs — look it up from the answer
+	ar.GameCode = "" // Will be filled from game lookup
+	var gameID int64
+	h.db.QueryRow("SELECT game_id FROM teams WHERE id = (SELECT team_id FROM answers WHERE id = ?)", answerID).Scan(&gameID)
+	var roomCode string
+	h.db.QueryRow("SELECT room_code FROM games WHERE id = ?", gameID).Scan(&roomCode)
+	ar.GameCode = roomCode
+
+	w.Header().Set("Content-Type", "text/html")
+	h.renderPartial(w, ar, "answer_row", "templates/admin/partials/answer_row.html")
 }
 
 // --- Helper Functions ---
@@ -1312,4 +1704,23 @@ func buildStateChangeEventData(db *sql.DB, gameID int64, state string, question 
 
 	jsonBytes, _ := json.Marshal(data)
 	return string(jsonBytes)
+}
+
+// parseAdminMCOptions parses MC option JSON into a slice of strings for template rendering.
+// Returns a slice of exactly 4 elements (empty string for missing options).
+func parseAdminMCOptions(options sql.NullString) []string {
+	result := []string{"", "", "", ""}
+	if !options.Valid || options.String == "" {
+		return result
+	}
+	var opts []string
+	if err := json.Unmarshal([]byte(options.String), &opts); err != nil {
+		return result
+	}
+	for i, opt := range opts {
+		if i < 4 {
+			result[i] = opt
+		}
+	}
+	return result
 }

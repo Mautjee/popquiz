@@ -79,7 +79,7 @@
         {{if .Questions}}
         <div class="space-y-3 mb-4">
             {{range .Questions}}
-            <div class="bg-gray-700 rounded p-3 flex justify-between items-center">
+            <div id="question-{{.ID}}" class="bg-gray-700 rounded p-3 flex justify-between items-center">
                 <div>
                     <span class="text-gray-400 text-sm">{{.QuestionType}}</span>
                     <p class="font-medium">{{.QuestionText}}</p>
@@ -87,10 +87,21 @@
                     {{if .Options.Valid}}<p class="text-sm text-gray-400">Options: {{.Options.String}}</p>{{end}}
                     {{if .VideoFilename.Valid}}<p class="text-sm text-purple-400">📹 {{.VideoFilename.String}}</p>{{end}}
                 </div>
-                <form method="POST" action="/admin/question/{{.ID}}" onsubmit="return confirm('Delete this question?')">
-                    <input type="hidden" name="_method" value="DELETE">
-                    <button type="submit" class="text-red-400 hover:text-red-300 text-sm">🗑</button>
-                </form>
+                <div class="flex gap-2">
+                    <button hx-get="/admin/quiz/{{$.Quiz.ID}}/question/{{.ID}}/edit"
+                            hx-target="#question-{{.ID}}"
+                            hx-swap="outerHTML"
+                            class="text-indigo-400 hover:text-indigo-300 text-sm px-2 py-1">
+                        ✏️ Edit
+                    </button>
+                    <button hx-delete="/admin/quiz/{{$.Quiz.ID}}/question/{{.ID}}"
+                            hx-target="#question-{{.ID}}"
+                            hx-swap="outerHTML swap:0.3s"
+                            hx-confirm="Delete this question?"
+                            class="text-red-400 hover:text-red-300 text-sm px-2 py-1">
+                        🗑
+                    </button>
+                </div>
             </div>
             {{end}}
         </div>

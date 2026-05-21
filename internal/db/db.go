@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 
@@ -149,6 +150,18 @@ func migrate(db *sql.DB) error {
 	for _, m := range alterMigrations {
 		// Ignore errors if column already exists
 		tx.Exec(m)
+	}
+
+	// Add host_approved column to answers if not exists
+	var hostApprovedCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('answers') WHERE name='host_approved'").Scan(&hostApprovedCount)
+	if err != nil {
+		// pragma_table_info may not work in transaction; try alter anyway
+		tx.Exec("ALTER TABLE answers ADD COLUMN host_approved INTEGER CHECK(host_approved IN (0, 1))")
+	} else if hostApprovedCount == 0 {
+		if _, err := tx.Exec("ALTER TABLE answers ADD COLUMN host_approved INTEGER CHECK(host_approved IN (0, 1))"); err != nil {
+			log.Printf("Warning: could not add host_approved column: %v", err)
+		}
 	}
 
 	return tx.Commit()

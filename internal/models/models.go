@@ -56,12 +56,13 @@ type Player struct {
 }
 
 type Answer struct {
-	ID         int64
-	TeamID     int64
-	QuestionID int64
-	AnswerText string
-	IsCorrect  sql.NullInt64
-	ScoredAt   sql.NullString
+	ID           int64
+	TeamID       int64
+	QuestionID   int64
+	AnswerText   string
+	IsCorrect    sql.NullInt64
+	ScoredAt     sql.NullString
+	HostApproved sql.NullInt64
 }
 
 type AdminSession struct {

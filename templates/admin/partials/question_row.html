@@ -1,0 +1,26 @@
+{{define "question_row"}}
+<div id="question-{{.Question.ID}}" class="bg-gray-700 rounded p-3 flex justify-between items-center">
+    <div>
+        <span class="text-gray-400 text-sm">{{.Question.QuestionType}}</span>
+        <p class="font-medium">{{.Question.QuestionText}}</p>
+        <p class="text-sm text-gray-400">Answer: {{.Question.CorrectAnswer}} | Points: {{.Question.Points}}</p>
+        {{if .Question.Options.Valid}}<p class="text-sm text-gray-400">Options: {{.Question.Options.String}}</p>{{end}}
+        {{if .Question.VideoFilename.Valid}}<p class="text-sm text-purple-400">📹 {{.Question.VideoFilename.String}}</p>{{end}}
+    </div>
+    <div class="flex gap-2">
+        <button hx-get="/admin/quiz/{{.QuizID}}/question/{{.Question.ID}}/edit"
+                hx-target="#question-{{.Question.ID}}"
+                hx-swap="outerHTML"
+                class="text-indigo-400 hover:text-indigo-300 text-sm px-2 py-1">
+            ✏️ Edit
+        </button>
+        <button hx-delete="/admin/quiz/{{.QuizID}}/question/{{.Question.ID}}"
+                hx-target="#question-{{.Question.ID}}"
+                hx-swap="outerHTML swap:0.3s"
+                hx-confirm="Delete this question?"
+                class="text-red-400 hover:text-red-300 text-sm px-2 py-1">
+            🗑
+        </button>
+    </div>
+</div>
+{{end}}

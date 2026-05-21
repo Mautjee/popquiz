@@ -1,0 +1,45 @@
+{{define "answer_row"}}
+<div id="answer-{{.AnswerID}}" class="flex items-center justify-between bg-gray-700 rounded p-3">
+    <div class="flex-1">
+        <p class="font-medium">{{.TeamName}}</p>
+        <p class="text-gray-300 text-sm">{{.AnswerText}}</p>
+        {{if eq .QuestionType "ranged"}}
+        <p class="text-gray-400 text-xs">Ranged answer (numeric)</p>
+        {{end}}
+    </div>
+    <div class="flex items-center gap-2 ml-4">
+        {{if .IsCorrect.Valid}}
+            {{if eq .IsCorrect.Int64 1}}
+            <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded text-xs font-semibold">✅ Correct</span>
+            {{else}}
+            <span class="px-2 py-1 bg-red-500/20 text-red-300 rounded text-xs font-semibold">❌ Incorrect</span>
+            {{end}}
+        {{else if .HostApproved.Valid}}
+            {{if eq .HostApproved.Int64 1}}
+            <span class="px-2 py-1 bg-green-500/20 text-green-300 rounded text-xs font-semibold">✅ Approved</span>
+            {{else}}
+            <span class="px-2 py-1 bg-red-500/20 text-red-300 rounded text-xs font-semibold">❌ Denied</span>
+            {{end}}
+        {{else}}
+            {{if eq .QuestionType "open"}}
+            <span class="px-2 py-1 bg-yellow-500/20 text-yellow-300 rounded text-xs font-semibold">⏳ Pending</span>
+            {{else if eq .QuestionType "multiple_choice"}}
+            <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded text-xs font-semibold">Auto-scored</span>
+            {{else if eq .QuestionType "ranged"}}
+            <span class="px-2 py-1 bg-blue-500/20 text-blue-300 rounded text-xs font-semibold">Auto-scored</span>
+            {{end}}
+        {{end}}
+
+        {{if eq .QuestionType "open"}}
+        {{if not .HostApproved.Valid}}
+        <form hx-post="/admin/game/{{.GameCode}}/answers/{{.AnswerID}}/approve" hx-target="#answer-{{.AnswerID}}" hx-swap="outerHTML" class="inline">
+            <button type="submit" class="px-2 py-1 bg-green-600 hover:bg-green-700 rounded text-xs text-white font-semibold transition">✓ Approve</button>
+        </form>
+        <form hx-post="/admin/game/{{.GameCode}}/answers/{{.AnswerID}}/deny" hx-target="#answer-{{.AnswerID}}" hx-swap="outerHTML" class="inline">
+            <button type="submit" class="px-2 py-1 bg-red-600 hover:bg-red-700 rounded text-xs text-white font-semibold transition">✗ Deny</button>
+        </form>
+        {{end}}
+        {{end}}
+    </div>
+</div>
+{{end}}
