@@ -31,8 +31,9 @@ func NewGameHandler(db *sql.DB, broker *sse.Broker, sessionSecret string) *GameH
 
 func (h *GameHandler) render(w http.ResponseWriter, data interface{}, name string, files ...string) {
 	allFiles := append([]string{"templates/base.html"}, files...)
-	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+	tmpl := template.Must(template.New(".").Funcs(template.FuncMap{
 		"add": func(a, b int) int { return a + b },
+		"ne": func(a, b interface{}) bool { return a != b },
 		"json": func(v interface{}) string {
 			b, _ := json.Marshal(v)
 			return string(b)
@@ -44,8 +45,9 @@ func (h *GameHandler) render(w http.ResponseWriter, data interface{}, name strin
 }
 
 func (h *GameHandler) renderPartial(w http.ResponseWriter, data interface{}, name string, files ...string) {
-	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
+	tmpl := template.Must(template.New(".").Funcs(template.FuncMap{
 		"add": func(a, b int) int { return a + b },
+		"ne": func(a, b interface{}) bool { return a != b },
 		"json": func(v interface{}) string {
 			b, _ := json.Marshal(v)
 			return string(b)
@@ -66,7 +68,7 @@ func (h *GameHandler) getPlayerFromCookie(r *http.Request) (playerID, teamID int
 
 // PlayerInfo holds basic team member data for the lobby display.
 type PlayerInfo struct {
-	Name   string
+	Name   sql.NullString
 	IsHead int
 }
 
@@ -75,10 +77,10 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	// Look up game
 	var game models.Game
 	err := h.db.QueryRow(`
-		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
 		FROM games WHERE room_code = ?
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
-		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +93,13 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	`, playerID).Scan(&player.ID, &player.TeamID, &player.Name, &player.IsHead, &player.LastSeenAt, &player.JoinedAt)
 	if err != nil {
 		return nil, err
+	}
+
+	// Auto-assign player name if null
+	if !player.Name.Valid || player.Name.String == "" {
+		var playerCount int
+		h.db.QueryRow("SELECT COUNT(*) FROM players WHERE team_id = ?", teamID).Scan(&playerCount)
+		player.Name = sql.NullString{String: fmt.Sprintf("Player %d", playerCount), Valid: true}
 	}
 
 	// Look up team
@@ -107,10 +116,15 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	var players []PlayerInfo
 	pRows, err := h.db.Query("SELECT name, is_head FROM players WHERE team_id = ? ORDER BY joined_at", teamID)
 	if err == nil {
+		idx := 1
 		for pRows.Next() {
 			var p PlayerInfo
 			pRows.Scan(&p.Name, &p.IsHead)
+			if !p.Name.Valid || p.Name.String == "" {
+				p.Name = sql.NullString{String: fmt.Sprintf("Player %d", idx), Valid: true}
+			}
 			players = append(players, p)
+			idx++
 		}
 		pRows.Close()
 	}
@@ -119,13 +133,14 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	}
 
 	data := map[string]interface{}{
-		"Game":    game,
-		"Player":  player,
-		"Team":    team,
-		"Code":    code,
-		"IsHead":  player.IsHead == 1,
-		"HeadIcon": "👑",
-		"Players": players,
+		"Game":         game,
+		"Player":      player,
+		"Team":        team,
+		"Code":        code,
+		"IsHead":      player.IsHead == 1,
+		"HeadIcon":    "👑",
+		"Players":     players,
+		"ShowQuestion": game.ShowQuestion == 1, // For video questions: true = reveal question text+answer input
 	}
 
 	// Load round and question info if in question state
@@ -234,13 +249,13 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 
 	playerID, teamID, ok := h.getPlayerFromCookie(r)
 	if !ok {
-		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
 		return
 	}
 
 	data, err := h.buildPlayerData(code, playerID, teamID)
 	if err != nil {
-		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
 		return
 	}
 
@@ -253,13 +268,13 @@ func (h *GameHandler) GetGamePartial(w http.ResponseWriter, r *http.Request) {
 
 	playerID, teamID, ok := h.getPlayerFromCookie(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
 		return
 	}
 
 	data, err := h.buildPlayerData(code, playerID, teamID)
 	if err != nil {
-		http.Error(w, "game not found", http.StatusNotFound)
+		http.Redirect(w, r, "/join/"+code, http.StatusSeeOther)
 		return
 	}
 
@@ -308,9 +323,9 @@ func (h *GameHandler) GetPlayerTeamInfo(w http.ResponseWriter, r *http.Request) 
 		template.HTMLEscapeString(team.Name),
 		template.HTMLEscapeString(func() string {
 			if player.IsHead == 1 {
-				return `<p class="text-yellow-400 text-sm">👑 You are the Team Head</p>`
+				return `<p class="text-yellow-400 text-sm">👑 You are submitting</p>`
 			}
-			return `<p class="text-gray-400 text-sm">Team Member</p>`
+			return `<p class="text-gray-400 text-sm">Watching</p>`
 		}()),
 		template.HTMLEscapeString(code),
 	)
@@ -427,10 +442,10 @@ func (h *GameHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 
 	var game models.Game
 	err := h.db.QueryRow(`
-		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
 		FROM games WHERE room_code = ?
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
-		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
 	if err != nil {
 		http.Error(w, "Game not found", http.StatusNotFound)
 		return

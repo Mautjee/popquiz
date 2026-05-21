@@ -48,6 +48,7 @@ func (h *AdminHandler) render(w http.ResponseWriter, data interface{}, name stri
 			b, _ := json.Marshal(v)
 			return string(b)
 		},
+		"ne": func(a, b interface{}) bool { return a != b },
 	}).ParseFiles(allFiles...))
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("render error (%s): %v", name, err)
@@ -61,6 +62,7 @@ func (h *AdminHandler) renderPartial(w http.ResponseWriter, data interface{}, na
 			b, _ := json.Marshal(v)
 			return string(b)
 		},
+		"ne": func(a, b interface{}) bool { return a != b },
 	}).ParseFiles(files...))
 	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
 		log.Printf("renderPartial error (%s): %v", name, err)
@@ -272,9 +274,9 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 	// Check if a game already exists for this quiz
 	var game models.Game
 	gameErr := h.db.QueryRow(`
-		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
 		FROM games WHERE quiz_id = ? ORDER BY created_at DESC LIMIT 1
-	`, quizID).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State, &game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
+	`, quizID).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State, &game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
 
 	data := map[string]interface{}{
 		"Quiz":                quiz,
@@ -498,10 +500,10 @@ func (h *AdminHandler) PostCreateGame(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error) {
 	var game models.Game
 	err := h.db.QueryRow(`
-		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
 		FROM games WHERE room_code = ?
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
-		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -516,22 +518,35 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 		"Code": code,
 	}
 
-	// Load teams
+	// Load teams with player counts
+	type TeamWithCount struct {
+		Team        models.Team
+		PlayerCount int
+	}
+	var teamsWithCounts []TeamWithCount
 	tRows, err := h.db.Query("SELECT id, game_id, name, score FROM teams WHERE game_id = ? ORDER BY name", game.ID)
 	if err != nil {
 		return nil, err
 	}
-	var teams []models.Team
 	for tRows.Next() {
 		var t models.Team
 		tRows.Scan(&t.ID, &t.GameID, &t.Name, &t.Score)
-		teams = append(teams, t)
+		var playerCount int
+		h.db.QueryRow("SELECT COUNT(*) FROM players WHERE team_id = ?", t.ID).Scan(&playerCount)
+		teamsWithCounts = append(teamsWithCounts, TeamWithCount{Team: t, PlayerCount: playerCount})
 	}
 	tRows.Close()
-	if teams == nil {
-		teams = []models.Team{}
+	if teamsWithCounts == nil {
+		teamsWithCounts = []TeamWithCount{}
+	}
+
+	// Also load plain teams for backward compatibility
+	var teams []models.Team
+	for _, twc := range teamsWithCounts {
+		teams = append(teams, twc.Team)
 	}
 	data["Teams"] = teams
+	data["TeamsWithCounts"] = teamsWithCounts
 
 	// Load current question info if in question state
 	if game.State == "question" && game.CurrentQuestionID.Valid {
@@ -646,10 +661,10 @@ func (h *AdminHandler) GetGameEvents(w http.ResponseWriter, r *http.Request) {
 func (h *AdminHandler) getGame(code string) (*models.Game, error) {
 	var game models.Game
 	err := h.db.QueryRow(`
-		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
+		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, show_question, created_at
 		FROM games WHERE room_code = ?
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
-		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
+		&game.CurrentQuestionID, &game.CurrentRoundID, &game.ShowQuestion, &game.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -720,7 +735,7 @@ func (h *AdminHandler) PostStartRound(w http.ResponseWriter, r *http.Request) {
 
 	// Update game state
 	_, err = h.db.Exec(`
-		UPDATE games SET state = 'question', current_question_id = ?, current_round_id = ?
+		UPDATE games SET state = 'question', current_question_id = ?, current_round_id = ?, show_question = 0
 		WHERE id = ?
 	`, firstQuestion.ID, round.ID, game.ID)
 	if err != nil {
@@ -769,7 +784,7 @@ func (h *AdminHandler) PostNextQuestion(w http.ResponseWriter, r *http.Request) 
 
 	// Update game state
 	_, err = h.db.Exec(`
-		UPDATE games SET current_question_id = ? WHERE id = ?
+		UPDATE games SET current_question_id = ?, show_question = 0 WHERE id = ?
 	`, nextQuestion.ID, game.ID)
 	if err != nil {
 		http.Error(w, "Error updating game state", http.StatusInternalServerError)
@@ -805,7 +820,7 @@ func (h *AdminHandler) PostEndRound(w http.ResponseWriter, r *http.Request) {
 	autoScoreRound(h.db, h.broker, game)
 
 	// Update game state to round_reveal
-	_, err = h.db.Exec("UPDATE games SET state = 'round_reveal' WHERE id = ?", game.ID)
+	_, err = h.db.Exec("UPDATE games SET state = 'round_reveal', show_question = 0 WHERE id = ?", game.ID)
 	if err != nil {
 		http.Error(w, "Error updating game state", http.StatusInternalServerError)
 		return
@@ -866,6 +881,11 @@ func (h *AdminHandler) PostShowQuestion(w http.ResponseWriter, r *http.Request) 
 	if game.State != "question" || !game.CurrentQuestionID.Valid {
 		http.Error(w, "Not in question state", http.StatusUnprocessableEntity)
 		return
+	}
+
+	_, err = h.db.Exec("UPDATE games SET show_question = 1 WHERE id = ?", game.ID)
+	if err != nil {
+		log.Printf("Error updating show_question: %v", err)
 	}
 
 	h.broker.Publish(code, sse.Event{
@@ -944,13 +964,77 @@ func (h *AdminHandler) PostEndGame(w http.ResponseWriter, r *http.Request) {
 	// Recalculate all team scores one final time
 	recalculateAllScores(h.db, game.ID)
 
-	_, err = h.db.Exec("UPDATE games SET state = 'ended' WHERE id = ?", game.ID)
+	_, err = h.db.Exec("UPDATE games SET state = 'ended', show_question = 0 WHERE id = ?", game.ID)
 	if err != nil {
 		http.Error(w, "Error ending game", http.StatusInternalServerError)
 		return
 	}
 
 	h.broker.Publish(code, sse.Event{Type: "game_ended", Data: `{}`})
+
+	// Return updated game state panel
+	h.renderGamePanelPartial(w, code)
+}
+
+func (h *AdminHandler) PostResetGame(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	game, err := h.getGame(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	if game.State != "ended" {
+		http.Error(w, "Can only reset an ended game", http.StatusUnprocessableEntity)
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		log.Printf("Error starting reset transaction: %v", err)
+		http.Error(w, "Error resetting game", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete all answers for this game
+	if _, err := tx.Exec(`
+		DELETE FROM answers WHERE team_id IN (
+			SELECT id FROM teams WHERE game_id = ?
+		)
+	`, game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting answers: %v", err)
+		http.Error(w, "Error resetting game", http.StatusInternalServerError)
+		return
+	}
+
+	// Reset all team scores
+	if _, err := tx.Exec("UPDATE teams SET score = 0 WHERE game_id = ?", game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error resetting scores: %v", err)
+		http.Error(w, "Error resetting game", http.StatusInternalServerError)
+		return
+	}
+
+	// Reset game state
+	if _, err := tx.Exec(`
+		UPDATE games SET state = 'lobby', current_question_id = NULL, current_round_id = NULL, show_question = 0
+		WHERE id = ?
+	`, game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error resetting game state: %v", err)
+		http.Error(w, "Error resetting game", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("Error committing reset transaction: %v", err)
+		http.Error(w, "Error resetting game", http.StatusInternalServerError)
+		return
+	}
+
+	// Broadcast state_change so all players refresh
+	h.broker.Publish(code, sse.Event{Type: "state_change", Data: `{"state":"lobby"}`})
 
 	// Return updated game state panel
 	h.renderGamePanelPartial(w, code)

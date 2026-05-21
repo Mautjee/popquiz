@@ -1,21 +1,21 @@
 {{define "game_panel_teams"}}
 <div id="teams-list">
-    {{range .Teams}}
+    {{range .TeamsWithCounts}}
     <div class="team-row bg-gray-700 rounded p-3 flex justify-between items-center">
         <div>
-            <p class="font-semibold">{{.Name}}</p>
-            <p class="text-gray-400 text-sm">Score: {{.Score}}</p>
+            <p class="font-semibold">{{.Team.Name}}</p>
+            <p class="text-gray-400 text-sm">Score: {{.Team.Score}} · {{.PlayerCount}} player{{if ne .PlayerCount 1}}s{{end}}</p>
         </div>
-        <button hx-delete="/admin/game/{{$.Code}}/team/{{.ID}}"
+        <button hx-delete="/admin/game/{{$.Code}}/team/{{.Team.ID}}"
                 hx-target="closest .team-row"
                 hx-swap="outerHTML swap:0.3s"
-                hx-confirm="Remove team {{.Name}}?"
+                hx-confirm="Remove team {{.Team.Name}}?"
                 class="text-red-400 hover:text-red-300 text-xs">
             ✕
         </button>
     </div>
     {{end}}
-    {{if not .Teams}}
+    {{if not .TeamsWithCounts}}
     <p class="text-gray-400 text-sm">No teams yet</p>
     {{end}}
 </div>

@@ -109,25 +109,51 @@
                     <div class="flex gap-4">
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Type</label>
-                            <select name="question_type" class="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg"
+                            <select name="question_type" class="px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg question-type-select"
                                     onchange="toggleQuestionFields(this)">
                                 <option value="open">Open</option>
                                 <option value="ranged">Ranged</option>
                                 <option value="multiple_choice">Multiple Choice</option>
                             </select>
                         </div>
-                        <div class="flex-1" id="options-field" style="display:none;">
-                            <label class="block text-sm font-medium text-gray-300 mb-1">Options (JSON array)</label>
-                            <input type="text" name="options"
-                                   class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg"
-                                   placeholder='["Paris","London","Berlin","Madrid"]'>
+                    </div>
+                    <!-- Multiple choice options -->
+                    <div class="mc-options-fields" style="display:none;">
+                        <label class="block text-sm font-medium text-gray-300 mb-2">Options</label>
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Option A</label>
+                                <input type="text" data-option="A" class="mc-option-input w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" placeholder="Option A">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Option B</label>
+                                <input type="text" data-option="B" class="mc-option-input w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" placeholder="Option B">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Option C</label>
+                                <input type="text" data-option="C" class="mc-option-input w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" placeholder="Option C">
+                            </div>
+                            <div>
+                                <label class="block text-xs text-gray-400 mb-1">Option D</label>
+                                <input type="text" data-option="D" class="mc-option-input w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg" placeholder="Option D">
+                            </div>
                         </div>
+                        <input type="hidden" name="options" id="mc-options-hidden">
                     </div>
                     <div class="flex gap-4">
-                        <div class="flex-1">
+                        <div class="flex-1" id="correct-answer-text-field">
                             <label class="block text-sm font-medium text-gray-300 mb-1">Correct Answer</label>
-                            <input type="text" name="correct_answer" required
+                            <input type="text" name="correct_answer"
                                    class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg">
+                        </div>
+                        <div class="flex-1" id="correct-answer-mc-field" style="display:none;">
+                            <label class="block text-sm font-medium text-gray-300 mb-1">Correct Answer</label>
+                            <select name="correct_answer_mc" class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg">
+                                <option value="A">A</option>
+                                <option value="B">B</option>
+                                <option value="C">C</option>
+                                <option value="D">D</option>
+                            </select>
                         </div>
                         <div>
                             <label class="block text-sm font-medium text-gray-300 mb-1">Points</label>
@@ -153,13 +179,52 @@
 
     <script>
     function toggleQuestionFields(select) {
-        const optionsField = document.getElementById('options-field');
+        const mcFields = select.closest('details').querySelector('.mc-options-fields');
+        const textAnswerField = select.closest('details').querySelector('#correct-answer-text-field');
+        const mcAnswerField = select.closest('details').querySelector('#correct-answer-mc-field');
         if (select.value === 'multiple_choice') {
-            optionsField.style.display = 'block';
+            mcFields.style.display = 'block';
+            textAnswerField.style.display = 'none';
+            mcAnswerField.style.display = 'block';
         } else {
-            optionsField.style.display = 'none';
+            mcFields.style.display = 'none';
+            textAnswerField.style.display = 'block';
+            mcAnswerField.style.display = 'none';
         }
     }
+
+    // Intercept form submissions to serialize MC options
+    document.addEventListener('submit', function(e) {
+        const form = e.target;
+        const typeSelect = form.querySelector('.question-type-select') || form.querySelector('select[name="question_type"]');
+        if (!typeSelect) return;
+
+        if (typeSelect.value === 'multiple_choice') {
+            const inputs = form.querySelectorAll('.mc-option-input');
+            const options = [];
+            inputs.forEach(function(input) {
+                options.push(input.value.trim());
+            });
+            const hiddenInput = form.querySelector('input[name="options"]');
+            if (hiddenInput) {
+                hiddenInput.value = JSON.stringify(options);
+            }
+            // Replace correct_answer with the MC dropdown value
+            const correctInput = form.querySelector('input[name="correct_answer"]');
+            const mcCorrect = form.querySelector('select[name="correct_answer_mc"]');
+            if (correctInput && mcCorrect) {
+                correctInput.value = mcCorrect.value;
+            }
+        } else {
+            // Validate correct_answer is filled for non-MC
+            const correctInput = form.querySelector('input[name="correct_answer"]');
+            if (correctInput && !correctInput.value.trim()) {
+                e.preventDefault();
+                alert('Correct answer is required');
+                return;
+            }
+        }
+    });
     </script>
     {{end}}
 </div>
