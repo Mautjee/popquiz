@@ -52,12 +52,25 @@
     });
 
     es.addEventListener('state_change', function(e) {
+        const data = PopQuiz.parseSSEData(e.data);
+        // If state change includes video_url info for a group, pre-set the video source
+        if (data && data.current_question && data.current_question.video_url) {
+            const video = document.getElementById('video-player');
+            if (video) {
+                video.src = data.current_question.video_url;
+            }
+        }
         refreshGameState();
     });
 
     es.addEventListener('video_play', function(e) {
+        const data = PopQuiz.parseSSEData(e.data);
         const video = document.getElementById('video-player');
         if (video) {
+            // If the event includes a video_url (from a video group), use it
+            if (data && data.video_url) {
+                video.src = data.video_url;
+            }
             video.play().catch(function(err) {
                 console.log('Autoplay blocked:', err);
             });

@@ -251,29 +251,88 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 
-	// Load questions for each round
-	type RoundWithQuestions struct {
-		Round     models.Round
-		Questions []models.Question
-	}
-	var roundsWithQuestions []RoundWithQuestions
+	// Load questions and video groups for each round
+	var roundsWithQuestions []models.RoundData
 	for _, rd := range rounds {
+		var roundData models.RoundData
+		roundData.Round = rd
+
+		if rd.Type == "video" {
+			// Load video groups
+			vgRows, err := h.db.Query(`
+				SELECT id, round_id, title, video_filename, order_index
+				FROM video_groups WHERE round_id = ? ORDER BY order_index
+			`, rd.ID)
+			if err == nil {
+				for vgRows.Next() {
+					var vg models.VideoGroup
+					vgRows.Scan(&vg.ID, &vg.RoundID, &vg.Title, &vg.VideoFilename, &vg.OrderIndex)
+
+					// Load questions for this group
+					qRows, err := h.db.Query(`
+						SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+						FROM questions WHERE round_id = ? AND video_group_id = ? ORDER BY order_index
+					`, rd.ID, vg.ID)
+					var gQuestions []models.Question
+					if err == nil {
+						for qRows.Next() {
+							var q models.Question
+							qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
+							gQuestions = append(gQuestions, q)
+						}
+						qRows.Close()
+					}
+					if gQuestions == nil {
+						gQuestions = []models.Question{}
+					}
+					roundData.VideoGroups = append(roundData.VideoGroups, models.VideoGroupWithQuestions{
+						Group:     vg,
+						Questions: gQuestions,
+					})
+				}
+				vgRows.Close()
+			}
+
+			// Load ungrouped questions
+			uRows, err := h.db.Query(`
+				SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+				FROM questions WHERE round_id = ? AND video_group_id IS NULL ORDER BY order_index
+			`, rd.ID)
+			if err == nil {
+				for uRows.Next() {
+					var q models.Question
+					uRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
+					roundData.UngroupedQuestions = append(roundData.UngroupedQuestions, q)
+				}
+				uRows.Close()
+			}
+		}
+
+		// Load ALL questions (for backward compat + text rounds)
 		qRows, err := h.db.Query(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 			FROM questions WHERE round_id = ? ORDER BY order_index
 		`, rd.ID)
 		if err != nil {
-			roundsWithQuestions = append(roundsWithQuestions, RoundWithQuestions{Round: rd})
 			continue
 		}
 		var questions []models.Question
 		for qRows.Next() {
 			var q models.Question
-			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 			questions = append(questions, q)
 		}
 		qRows.Close()
-		roundsWithQuestions = append(roundsWithQuestions, RoundWithQuestions{Round: rd, Questions: questions})
+		roundData.Questions = questions
+
+		if roundData.UngroupedQuestions == nil {
+			roundData.UngroupedQuestions = []models.Question{}
+		}
+		if roundData.VideoGroups == nil {
+			roundData.VideoGroups = []models.VideoGroupWithQuestions{}
+		}
+
+		roundsWithQuestions = append(roundsWithQuestions, roundData)
 	}
 
 	// Check if a game already exists for this quiz
@@ -293,7 +352,7 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 		data["Game"] = game
 	}
 
-	h.render(w, data, "quiz_editor.html", "templates/admin/quiz_editor.html")
+	h.render(w, data, "quiz_editor.html", "templates/admin/quiz_editor.html", "templates/admin/partials/question_row.html", "templates/admin/partials/question_edit_form.html", "templates/admin/partials/question_fields.html")
 }
 
 func (h *AdminHandler) PostRound(w http.ResponseWriter, r *http.Request) {
@@ -527,9 +586,9 @@ func (h *AdminHandler) GetEditQuestion(w http.ResponseWriter, r *http.Request) {
 
 	var q models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 		FROM questions WHERE id = ?
-	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 	if err != nil {
 		http.Error(w, "Question not found", http.StatusNotFound)
 		return
@@ -575,9 +634,9 @@ func (h *AdminHandler) GetQuestionRow(w http.ResponseWriter, r *http.Request) {
 
 	var q models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 		FROM questions WHERE id = ?
-	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 	if err != nil {
 		http.Error(w, "Question not found", http.StatusNotFound)
 		return
@@ -745,9 +804,9 @@ func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request
 	// Return the updated question row
 	var q models.Question
 	h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 		FROM questions WHERE id = ?
-	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 
 	type RowData struct {
 		Question models.Question
@@ -897,6 +956,23 @@ func (h *AdminHandler) PostDeleteQuiz(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 	}
 
+	// Also delete video group videos
+	vgRows, err := h.db.Query(`
+		SELECT vg.video_filename FROM video_groups vg
+		JOIN rounds r ON vg.round_id = r.id
+		WHERE r.quiz_id = ? AND vg.video_filename IS NOT NULL
+	`, quizID)
+	if err == nil {
+		for vgRows.Next() {
+			var vf sql.NullString
+			vgRows.Scan(&vf)
+			if vf.Valid && vf.String != "" {
+				os.Remove(filepath.Join(h.dataDir, "videos", vf.String))
+			}
+		}
+		vgRows.Close()
+	}
+
 	tx, err := h.db.Begin()
 	if err != nil {
 		log.Printf("Error starting transaction: %v", err)
@@ -940,6 +1016,14 @@ func (h *AdminHandler) PostDeleteQuiz(w http.ResponseWriter, r *http.Request) {
 	if _, err := tx.Exec("DELETE FROM questions WHERE round_id IN (SELECT id FROM rounds WHERE quiz_id = ?)", quizID); err != nil {
 		tx.Rollback()
 		log.Printf("Error deleting questions: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete video groups
+	if _, err := tx.Exec("DELETE FROM video_groups WHERE round_id IN (SELECT id FROM rounds WHERE quiz_id = ?)", quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting video groups: %v", err)
 		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
 		return
 	}
@@ -1091,10 +1175,10 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 	if game.State == "question" && game.CurrentQuestionID.Valid {
 		var q models.Question
 		err = h.db.QueryRow(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 			FROM questions WHERE id = ?
 		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 		if err == nil {
 			data["CurrentQuestion"] = q
 			// Count answers for this question
@@ -1129,7 +1213,7 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 	var rwq []RoundWithQuestions
 	for _, rd := range rounds {
 		qRows, err := h.db.Query(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 			FROM questions WHERE round_id = ? ORDER BY order_index
 		`, rd.ID)
 		if err != nil {
@@ -1139,7 +1223,7 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 		var questions []models.Question
 		for qRows.Next() {
 			var q models.Question
-			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 			questions = append(questions, q)
 		}
 		qRows.Close()
@@ -1150,17 +1234,103 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 	// ShowQuestion for greying out the button
 	data["ShowQuestion"] = game.ShowQuestion == 1
 
+	// Determine if current question has a video group and if it's the first question in the group
+	if game.State == "question" && game.CurrentQuestionID.Valid {
+		var vgID sql.NullInt64
+		h.db.QueryRow("SELECT video_group_id FROM questions WHERE id = ?", game.CurrentQuestionID.Int64).Scan(&vgID)
+		if vgID.Valid && vgID.Int64 != 0 {
+			var vg models.VideoGroup
+			err := h.db.QueryRow("SELECT id, round_id, title, video_filename, order_index FROM video_groups WHERE id = ?", vgID.Int64).Scan(&vg.ID, &vg.RoundID, &vg.Title, &vg.VideoFilename, &vg.OrderIndex)
+			if err == nil {
+				data["CurrentVideoGroup"] = vg
+				// Check if this is the first question in the group
+				var firstQuestionID int64
+				err := h.db.QueryRow("SELECT id FROM questions WHERE video_group_id = ? ORDER BY order_index LIMIT 1", vg.ID).Scan(&firstQuestionID)
+				if err == nil {
+					data["IsFirstInGroup"] = firstQuestionID == game.CurrentQuestionID.Int64
+				}
+			}
+		}
+	}
+
 	// HasNextQuestion for greying out the Next Question button
+	// Uses group-aware ordering: grouped questions ordered by group then question,
+	// then ungrouped questions by their order_index
 	hasNextQuestion := false
 	if game.State == "question" && game.CurrentQuestionID.Valid && game.CurrentRoundID.Valid {
-		var nextQID int64
-		err = h.db.QueryRow(`
-			SELECT id FROM questions WHERE round_id = ? AND order_index > (
-				SELECT order_index FROM questions WHERE id = ?
-			) ORDER BY order_index LIMIT 1
-		`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(&nextQID)
-		if err == nil {
-			hasNextQuestion = true
+		// Check current question's group
+		var currentVGID sql.NullInt64
+		h.db.QueryRow("SELECT video_group_id FROM questions WHERE id = ?", game.CurrentQuestionID.Int64).Scan(&currentVGID)
+
+		if currentVGID.Valid && currentVGID.Int64 != 0 {
+			// Question belongs to a group — check for next question in same group
+			var nextQID int64
+			err = h.db.QueryRow(`
+				SELECT id FROM questions
+				WHERE video_group_id = ? AND order_index > (
+					SELECT order_index FROM questions WHERE id = ?
+				) ORDER BY order_index LIMIT 1
+			`, currentVGID.Int64, game.CurrentQuestionID.Int64).Scan(&nextQID)
+			if err == nil {
+				hasNextQuestion = true
+			} else {
+				// No more questions in this group — check for next group or ungrouped
+				var currentVGOrder int
+				var currentQOrder int
+				h.db.QueryRow("SELECT order_index FROM video_groups WHERE id = ?", currentVGID.Int64).Scan(&currentVGOrder)
+				h.db.QueryRow("SELECT order_index FROM questions WHERE id = ?", game.CurrentQuestionID.Int64).Scan(&currentQOrder)
+
+				// Next question in the next group
+				err = h.db.QueryRow(`
+					SELECT q.id FROM questions q
+					JOIN video_groups vg ON vg.id = q.video_group_id
+					WHERE q.round_id = ? AND vg.order_index > ?
+					ORDER BY vg.order_index, q.order_index LIMIT 1
+				`, game.CurrentRoundID.Int64, currentVGOrder).Scan(&nextQID)
+				if err == nil {
+					hasNextQuestion = true
+				} else {
+					// Check ungrouped questions
+					err = h.db.QueryRow(`
+						SELECT id FROM questions
+						WHERE round_id = ? AND video_group_id IS NULL
+						ORDER BY order_index LIMIT 1
+					`, game.CurrentRoundID.Int64).Scan(&nextQID)
+					if err == nil {
+						hasNextQuestion = true
+					}
+				}
+			}
+		} else {
+			// Ungrouped question — check for next ungrouped question
+			var nextQID int64
+			err = h.db.QueryRow(`
+				SELECT id FROM questions
+				WHERE round_id = ? AND video_group_id IS NULL AND order_index > (
+					SELECT order_index FROM questions WHERE id = ?
+				) ORDER BY order_index LIMIT 1
+			`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(&nextQID)
+			if err == nil {
+				hasNextQuestion = true
+			} else {
+				// No more ungrouped questions — check if there are grouped questions after
+				err = h.db.QueryRow(`
+					SELECT id FROM questions
+					WHERE round_id = ? AND video_group_id IS NOT NULL
+					ORDER BY order_index LIMIT 1
+				`, game.CurrentRoundID.Int64).Scan(&nextQID)
+				if err != nil {
+					// Backward compat: check simple order_index ordering
+					err = h.db.QueryRow(`
+						SELECT id FROM questions WHERE round_id = ? AND order_index > (
+							SELECT order_index FROM questions WHERE id = ?
+						) ORDER BY order_index LIMIT 1
+					`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(&nextQID)
+					if err == nil {
+						hasNextQuestion = true
+					}
+				}
+			}
 		}
 	}
 	data["HasNextQuestion"] = hasNextQuestion
@@ -1276,14 +1446,18 @@ func (h *AdminHandler) PostStartRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Find the first question in this round
+	// Find the first question in this round using group-aware ordering
 	var firstQuestion models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
-		FROM questions WHERE round_id = ? ORDER BY order_index LIMIT 1
+		SELECT q.id, q.round_id, q.question_text, q.question_type, q.correct_answer, q.options, q.video_filename, q.image_filename, q.points, q.order_index, COALESCE(q.video_group_id, 0)
+		FROM questions q
+		LEFT JOIN video_groups vg ON vg.id = q.video_group_id
+		WHERE q.round_id = ?
+		ORDER BY COALESCE(vg.order_index, 999999), q.order_index
+		LIMIT 1
 	`, round.ID).Scan(&firstQuestion.ID, &firstQuestion.RoundID, &firstQuestion.QuestionText,
 		&firstQuestion.QuestionType, &firstQuestion.CorrectAnswer, &firstQuestion.Options,
-		&firstQuestion.VideoFilename, &firstQuestion.ImageFilename, &firstQuestion.Points, &firstQuestion.OrderIndex)
+		&firstQuestion.VideoFilename, &firstQuestion.ImageFilename, &firstQuestion.Points, &firstQuestion.OrderIndex, &firstQuestion.VideoGroupID)
 
 	if err != nil {
 		http.Error(w, "No questions in this round", http.StatusUnprocessableEntity)
@@ -1321,20 +1495,95 @@ func (h *AdminHandler) PostNextQuestion(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Find next question in the current round
+	// Find next question in the current round using group-aware ordering
+	// 1. If current question is in a group, check for next question in same group
+	// 2. If no more in same group, check next group
+	// 3. If no more groups, check ungrouped questions
 	var nextQuestion models.Question
-	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
-		FROM questions WHERE round_id = ? AND order_index > (
-			SELECT order_index FROM questions WHERE id = ?
-		) ORDER BY order_index LIMIT 1
-	`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(
-		&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
-		&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
-		&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex)
+	var nextFound bool
 
-	if err == sql.ErrNoRows {
-		// No more questions in this round — host should end round instead
+	var currentVGID sql.NullInt64
+	h.db.QueryRow("SELECT video_group_id FROM questions WHERE id = ?", game.CurrentQuestionID.Int64).Scan(&currentVGID)
+
+	if currentVGID.Valid && currentVGID.Int64 != 0 {
+		// Current question is in a group — look for next question in same group
+		err = h.db.QueryRow(`
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+			FROM questions WHERE video_group_id = ? AND order_index > (
+				SELECT order_index FROM questions WHERE id = ?
+			) ORDER BY order_index LIMIT 1
+		`, currentVGID.Int64, game.CurrentQuestionID.Int64).Scan(
+			&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
+			&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
+			&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex, &nextQuestion.VideoGroupID)
+
+		if err == nil {
+			nextFound = true
+		} else {
+			// No more in this group — find first question in next group
+			var currentVGOrder int
+			h.db.QueryRow("SELECT order_index FROM video_groups WHERE id = ?", currentVGID.Int64).Scan(&currentVGOrder)
+			err = h.db.QueryRow(`
+				SELECT q.id, q.round_id, q.question_text, q.question_type, q.correct_answer, q.options, q.video_filename, q.image_filename, q.points, q.order_index, COALESCE(q.video_group_id, 0)
+				FROM questions q
+				JOIN video_groups vg ON vg.id = q.video_group_id
+				WHERE q.round_id = ? AND vg.order_index > ?
+				ORDER BY vg.order_index, q.order_index LIMIT 1
+			`, game.CurrentRoundID.Int64, currentVGOrder).Scan(
+				&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
+				&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
+				&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex, &nextQuestion.VideoGroupID)
+
+			if err == nil {
+				nextFound = true
+			} else {
+				// No more groups — check ungrouped questions
+				err = h.db.QueryRow(`
+					SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+					FROM questions
+					WHERE round_id = ? AND video_group_id IS NULL
+					ORDER BY order_index LIMIT 1
+				`, game.CurrentRoundID.Int64).Scan(
+					&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
+					&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
+					&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex, &nextQuestion.VideoGroupID)
+				if err == nil {
+					nextFound = true
+				}
+			}
+		}
+	} else {
+		// Current question is ungrouped
+		err = h.db.QueryRow(`
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+			FROM questions WHERE round_id = ? AND video_group_id IS NULL AND order_index > (
+				SELECT order_index FROM questions WHERE id = ?
+			) ORDER BY order_index LIMIT 1
+		`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(
+			&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
+			&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
+			&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex, &nextQuestion.VideoGroupID)
+
+		if err == nil {
+			nextFound = true
+		} else {
+			// Fallback: simple order_index ordering (backward compat)
+			err = h.db.QueryRow(`
+				SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+				FROM questions WHERE round_id = ? AND order_index > (
+					SELECT order_index FROM questions WHERE id = ?
+				) ORDER BY order_index LIMIT 1
+			`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(
+				&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
+				&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
+				&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex, &nextQuestion.VideoGroupID)
+			if err == nil {
+				nextFound = true
+			}
+		}
+	}
+
+	if !nextFound {
 		http.Error(w, "No more questions in this round", http.StatusUnprocessableEntity)
 		return
 	}
@@ -1430,9 +1679,22 @@ func (h *AdminHandler) PostVideoPlay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build video_play event data, including video_url if the question belongs to a group
+	eventData := fmt.Sprintf(`{"question_id":%d}`, game.CurrentQuestionID.Int64)
+
+	var vgID sql.NullInt64
+	h.db.QueryRow("SELECT video_group_id FROM questions WHERE id = ?", game.CurrentQuestionID.Int64).Scan(&vgID)
+	if vgID.Valid && vgID.Int64 != 0 {
+		var vgFilename sql.NullString
+		h.db.QueryRow("SELECT video_filename FROM video_groups WHERE id = ?", vgID.Int64).Scan(&vgFilename)
+		if vgFilename.Valid && vgFilename.String != "" {
+			eventData = fmt.Sprintf(`{"question_id":%d,"video_url":"/static/videos/%s"}`, game.CurrentQuestionID.Int64, vgFilename.String)
+		}
+	}
+
 	h.broker.Publish(code, sse.Event{
 		Type: "video_play",
-		Data: fmt.Sprintf(`{"question_id":%d}`, game.CurrentQuestionID.Int64),
+		Data: eventData,
 	})
 
 	// Return updated game state panel (no state change, but refreshes UI)
@@ -1727,7 +1989,7 @@ func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
 
 	// Load questions for this round
 	qRows, err := h.db.Query(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 		FROM questions WHERE round_id = ? ORDER BY order_index
 	`, game.CurrentRoundID.Int64)
 	if err != nil {
@@ -1737,7 +1999,7 @@ func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
 	var questions []models.Question
 	for qRows.Next() {
 		var q models.Question
-		qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+		qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 		questions = append(questions, q)
 	}
 	qRows.Close()
@@ -2165,6 +2427,14 @@ func buildStateChangeEventData(db *sql.DB, gameID int64, state string, question 
 		if question.ImageFilename.Valid {
 			qData["image_filename"] = question.ImageFilename.String
 		}
+		// If the question belongs to a video group, include the group's video URL
+		if question.VideoGroupID.Valid && question.VideoGroupID.Int64 != 0 {
+			var vgFilename sql.NullString
+			err := db.QueryRow("SELECT video_filename FROM video_groups WHERE id = ?", question.VideoGroupID.Int64).Scan(&vgFilename)
+			if err == nil && vgFilename.Valid && vgFilename.String != "" {
+				qData["video_url"] = "/static/videos/" + vgFilename.String
+			}
+		}
 		data["current_question"] = qData
 	}
 
@@ -2197,4 +2467,314 @@ func parseAdminMCOptions(options sql.NullString) []string {
 		}
 	}
 	return result
+}
+
+// --- Video Group Handlers ---
+
+// PostVideoGroup creates a new video group for a round.
+func (h *AdminHandler) PostVideoGroup(w http.ResponseWriter, r *http.Request) {
+	roundID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid round ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	title := strings.TrimSpace(r.FormValue("title"))
+
+	// Get next order index for video groups in this round
+	var maxOrder sql.NullInt64
+	h.db.QueryRow("SELECT MAX(order_index) FROM video_groups WHERE round_id = ?", roundID).Scan(&maxOrder)
+	orderIndex := 0
+	if maxOrder.Valid {
+		orderIndex = int(maxOrder.Int64) + 1
+	}
+
+	// Handle video upload
+	var videoFilename sql.NullString
+	file, header, err := r.FormFile("video_file")
+	if err == nil {
+		defer file.Close()
+
+		ext := filepath.Ext(header.Filename)
+		if ext == "" {
+			ext = ".mp4"
+		}
+		filename := generateToken() + ext
+		videoPath := filepath.Join(h.dataDir, "videos", filename)
+
+		dst, err := os.Create(videoPath)
+		if err != nil {
+			log.Printf("Error creating video file: %v", err)
+			http.Error(w, "Error saving video", http.StatusInternalServerError)
+			return
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, file); err != nil {
+			log.Printf("Error writing video file: %v", err)
+			http.Error(w, "Error saving video", http.StatusInternalServerError)
+			return
+		}
+
+		videoFilename = sql.NullString{String: filename, Valid: true}
+	}
+
+	result, err := h.db.Exec(`
+		INSERT INTO video_groups (round_id, title, video_filename, order_index)
+		VALUES (?, ?, ?, ?)
+	`, roundID, title, videoFilename, orderIndex)
+	if err != nil {
+		log.Printf("Error creating video group: %v", err)
+		http.Error(w, "Error creating video group", http.StatusInternalServerError)
+		return
+	}
+
+	_ = result
+
+	// Load the round to get quiz_id for redirect
+	var quizID int64
+	h.db.QueryRow("SELECT quiz_id FROM rounds WHERE id = ?", roundID).Scan(&quizID)
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/quiz/%d", quizID), http.StatusSeeOther)
+}
+
+// DeleteVideoGroup deletes a video group and nullifies its questions' video_group_id.
+func (h *AdminHandler) DeleteVideoGroup(w http.ResponseWriter, r *http.Request) {
+	roundID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid round ID", http.StatusBadRequest)
+		return
+	}
+	groupID, err := strconv.ParseInt(chi.URLParam(r, "gid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid group ID", http.StatusBadRequest)
+		return
+	}
+
+	// Delete video file from disk if present
+	var videoFilename sql.NullString
+	h.db.QueryRow("SELECT video_filename FROM video_groups WHERE id = ?", groupID).Scan(&videoFilename)
+	if videoFilename.Valid && videoFilename.String != "" {
+		os.Remove(filepath.Join(h.dataDir, "videos", videoFilename.String))
+	}
+
+	// Nullify video_group_id on all questions in this group
+	h.db.Exec("UPDATE questions SET video_group_id = NULL WHERE video_group_id = ?", groupID)
+
+	// Delete the group
+	h.db.Exec("DELETE FROM video_groups WHERE id = ?", groupID)
+
+	// Get quiz_id for redirect
+	var quizID int64
+	h.db.QueryRow("SELECT quiz_id FROM rounds WHERE id = ?", roundID).Scan(&quizID)
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/quiz/%d", quizID), http.StatusSeeOther)
+}
+
+// PostVideoGroupVideo replaces the video file for a video group.
+func (h *AdminHandler) PostVideoGroupVideo(w http.ResponseWriter, r *http.Request) {
+	roundID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid round ID", http.StatusBadRequest)
+		return
+	}
+	groupID, err := strconv.ParseInt(chi.URLParam(r, "gid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid group ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	file, header, err := r.FormFile("video_file")
+	if err != nil {
+		http.Error(w, "No video file provided", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	// Delete old video if exists
+	var oldVideo sql.NullString
+	h.db.QueryRow("SELECT video_filename FROM video_groups WHERE id = ?", groupID).Scan(&oldVideo)
+	if oldVideo.Valid && oldVideo.String != "" {
+		os.Remove(filepath.Join(h.dataDir, "videos", oldVideo.String))
+	}
+
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ext = ".mp4"
+	}
+	filename := generateToken() + ext
+	videoPath := filepath.Join(h.dataDir, "videos", filename)
+
+	dst, err := os.Create(videoPath)
+	if err != nil {
+		log.Printf("Error creating video file: %v", err)
+		http.Error(w, "Error saving video", http.StatusInternalServerError)
+		return
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, file); err != nil {
+		log.Printf("Error writing video file: %v", err)
+		http.Error(w, "Error saving video", http.StatusInternalServerError)
+		return
+	}
+
+	h.db.Exec("UPDATE video_groups SET video_filename = ? WHERE id = ?", filename, groupID)
+
+	// Get quiz_id for redirect
+	var quizID int64
+	h.db.QueryRow("SELECT quiz_id FROM rounds WHERE id = ?", roundID).Scan(&quizID)
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/quiz/%d", quizID), http.StatusSeeOther)
+}
+
+// DeleteVideoGroupVideo removes the video file from a video group.
+func (h *AdminHandler) DeleteVideoGroupVideo(w http.ResponseWriter, r *http.Request) {
+	roundID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid round ID", http.StatusBadRequest)
+		return
+	}
+	groupID, err := strconv.ParseInt(chi.URLParam(r, "gid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid group ID", http.StatusBadRequest)
+		return
+	}
+
+	var videoFilename sql.NullString
+	err = h.db.QueryRow("SELECT video_filename FROM video_groups WHERE id = ?", groupID).Scan(&videoFilename)
+	if err != nil {
+		http.Error(w, "Video group not found", http.StatusNotFound)
+		return
+	}
+
+	if videoFilename.Valid && videoFilename.String != "" {
+		os.Remove(filepath.Join(h.dataDir, "videos", videoFilename.String))
+		h.db.Exec("UPDATE video_groups SET video_filename = NULL WHERE id = ?", groupID)
+	}
+
+	var quizID int64
+	h.db.QueryRow("SELECT quiz_id FROM rounds WHERE id = ?", roundID).Scan(&quizID)
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/quiz/%d", quizID), http.StatusSeeOther)
+}
+
+// PostQuestionInGroup creates a new question within a video group.
+func (h *AdminHandler) PostQuestionInGroup(w http.ResponseWriter, r *http.Request) {
+	roundID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid round ID", http.StatusBadRequest)
+		return
+	}
+	groupID, err := strconv.ParseInt(chi.URLParam(r, "gid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid group ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	questionText := strings.TrimSpace(r.FormValue("question_text"))
+	questionType := r.FormValue("question_type")
+	correctAnswer := strings.TrimSpace(r.FormValue("correct_answer"))
+	pointsStr := r.FormValue("points")
+	options := r.FormValue("options")
+
+	// For offline quizzes, force question_type = 'open'
+	var quizMode string
+	h.db.QueryRow("SELECT q.mode FROM quizzes q JOIN rounds r ON r.quiz_id = q.id WHERE r.id = ?", roundID).Scan(&quizMode)
+	if quizMode == "offline" {
+		questionType = "open"
+	}
+
+	points := 1
+	if pointsStr != "" {
+		if p, err := strconv.Atoi(pointsStr); err == nil && p > 0 {
+			points = p
+		}
+	}
+
+	if questionText == "" {
+		http.Error(w, "Question text required", http.StatusUnprocessableEntity)
+		return
+	}
+	if quizMode != "offline" && correctAnswer == "" {
+		http.Error(w, "Correct answer required", http.StatusUnprocessableEntity)
+		return
+	}
+
+	// Get next order index for questions in this group
+	var maxOrder sql.NullInt64
+	h.db.QueryRow("SELECT MAX(order_index) FROM questions WHERE video_group_id = ?", groupID).Scan(&maxOrder)
+	orderIndex := 0
+	if maxOrder.Valid {
+		orderIndex = int(maxOrder.Int64) + 1
+	}
+
+	// Handle image upload (video lives on the group, not the question)
+	var imageFilename sql.NullString
+	imgFile, imgHeader, err := r.FormFile("image_file")
+	if err == nil {
+		defer imgFile.Close()
+
+		ext := filepath.Ext(imgHeader.Filename)
+		if ext == "" {
+			ext = ".png"
+		}
+		imgName := generateToken() + ext
+		imgPath := filepath.Join(h.dataDir, "images", imgName)
+
+		imgDst, err := os.Create(imgPath)
+		if err != nil {
+			log.Printf("Error creating image file: %v", err)
+			http.Error(w, "Error saving image", http.StatusInternalServerError)
+			return
+		}
+		defer imgDst.Close()
+
+		if _, err := io.Copy(imgDst, imgFile); err != nil {
+			log.Printf("Error writing image file: %v", err)
+			http.Error(w, "Error saving image", http.StatusInternalServerError)
+			return
+		}
+
+		imageFilename = sql.NullString{String: imgName, Valid: true}
+	}
+
+	// Handle options JSON for MC
+	var optionsJSON sql.NullString
+	if questionType == "multiple_choice" && options != "" {
+		optionsJSON = sql.NullString{String: options, Valid: true}
+	}
+
+	result, err := h.db.Exec(`
+		INSERT INTO questions (round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, video_group_id)
+		VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+	`, roundID, questionText, questionType, correctAnswer, optionsJSON, imageFilename, points, orderIndex, groupID)
+	if err != nil {
+		log.Printf("Error creating question in group: %v", err)
+		http.Error(w, "Error creating question", http.StatusInternalServerError)
+		return
+	}
+
+	_ = result
+
+	// Get quiz_id for redirect
+	var quizID int64
+	h.db.QueryRow("SELECT quiz_id FROM rounds WHERE id = ?", roundID).Scan(&quizID)
+
+	http.Redirect(w, r, fmt.Sprintf("/admin/quiz/%d", quizID), http.StatusSeeOther)
 }

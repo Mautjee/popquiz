@@ -7,6 +7,9 @@
         <p class="text-gray-300">Current Question: {{.CurrentQuestion.QuestionText}}</p>
         <p class="text-gray-400 text-sm">Type: {{.CurrentQuestion.QuestionType}} | Points: {{.CurrentQuestion.Points}}</p>
         {{end}}
+        {{if .CurrentVideoGroup}}
+        <p class="text-purple-400 text-sm mt-1">📹 Video Group: {{.CurrentVideoGroup.Title}}</p>
+        {{end}}
     </div>
 
     <!-- Controls -->
@@ -21,13 +24,17 @@
 
         {{if eq .Game.State "question"}}
         {{if .CurrentQuestion}}
-        {{if .CurrentQuestion.VideoFilename.Valid}}
+        {{if or .CurrentQuestion.VideoFilename.Valid .CurrentVideoGroup}}
         <div class="flex gap-3">
+            {{if and .CurrentVideoGroup (not .IsFirstInGroup)}}
+            <span class="py-2 px-4 bg-gray-600 rounded-lg text-gray-400 text-sm">Video already played for this group</span>
+            {{else}}
             <form hx-post="/admin/game/{{.Code}}/video-play" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/video-play">
                 <button type="submit" class="py-2 px-4 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold text-white transition">
                     🎬 Play Video
                 </button>
             </form>
+            {{end}}
             <form hx-post="/admin/game/{{.Code}}/show-question" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/show-question">
                 <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition {{if .ShowQuestion}}opacity-50 cursor-not-allowed{{end}}" {{if .ShowQuestion}}disabled{{end}}>
                     👁 Show Question

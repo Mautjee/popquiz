@@ -158,10 +158,10 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	if game.State == "question" && game.CurrentQuestionID.Valid {
 		var q models.Question
 		err = h.db.QueryRow(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 			FROM questions WHERE id = ?
 		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 		if err == nil && q.QuestionType == "multiple_choice" && q.Options.Valid {
 			mcOptions = parseMCOptions(q.Options.String)
 		}
@@ -188,12 +188,21 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 	if game.State == "question" && game.CurrentQuestionID.Valid {
 		var q models.Question
 		err = h.db.QueryRow(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
 			FROM questions WHERE id = ?
 		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex, &q.VideoGroupID)
 		if err == nil {
 			data["CurrentQuestion"] = q
+
+			// If question belongs to a video group, load the group's video URL
+			if q.VideoGroupID.Valid && q.VideoGroupID.Int64 != 0 {
+				var vgFilename sql.NullString
+				err := h.db.QueryRow("SELECT video_filename FROM video_groups WHERE id = ?", q.VideoGroupID.Int64).Scan(&vgFilename)
+				if err == nil && vgFilename.Valid && vgFilename.String != "" {
+					data["VideoURL"] = "/static/videos/" + vgFilename.String
+				}
+			}
 
 			// Parse MC options for this question
 			if q.QuestionType == "multiple_choice" && q.Options.Valid {
