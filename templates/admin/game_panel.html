@@ -1,0 +1,103 @@
+{{template "base.html" .}}
+
+{{define "title"}}Game Panel - {{.Code}} - PopQuiz{{end}}
+
+{{define "content"}}
+<div class="max-w-5xl mx-auto p-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-indigo-400">🎮 Game Panel</h1>
+        <div class="text-right">
+            <p class="text-gray-400 text-sm">Room Code</p>
+            <p class="text-4xl font-mono font-bold tracking-widest text-green-400" id="room-code">{{.Code}}</p>
+        </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Left: Game Controls -->
+        <div class="lg:col-span-2">
+            {{template "game_panel_game_state" .}}
+        </div>
+
+        <!-- Right: Teams -->
+        <div class="space-y-4">
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-3">Teams</h3>
+                {{template "game_panel_teams" .}}
+            </div>
+        </div>
+    </div>
+
+    <!-- Round Info -->
+    {{if .RoundsWithQuestions}}
+    <div class="mt-6 bg-gray-800 rounded-lg p-4">
+        <h3 class="text-lg font-semibold mb-3">Quiz Content</h3>
+        {{range .RoundsWithQuestions}}
+        <div class="mb-4">
+            <h4 class="font-medium text-indigo-300">{{.Round.Name}} <span class="text-sm text-gray-400">({{.Round.Type}})</span></h4>
+            <ol class="list-decimal list-inside text-gray-300 text-sm ml-4">
+                {{range .Questions}}
+                <li>{{.QuestionText}} <span class="text-gray-500">({{.QuestionType}}, {{.Points}}pt)</span></li>
+                {{end}}
+            </ol>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+
+<script>
+    const roomCode = "{{.Code}}";
+    const es = new EventSource('/admin/game/' + roomCode + '/events');
+
+    function refreshGameState() {
+        htmx.ajax('GET', '/admin/game/' + roomCode + '/partial', {
+            target: '#game-state',
+            swap: 'outerHTML'
+        });
+    }
+
+    function refreshTeams() {
+        htmx.ajax('GET', '/admin/game/' + roomCode + '/teams', {
+            target: '#teams-list',
+            swap: 'innerHTML'
+        });
+    }
+
+    es.addEventListener('player_joined', function(e) {
+        refreshTeams();
+        refreshGameState();
+    });
+
+    es.addEventListener('answer_submitted', function(e) {
+        const data = JSON.parse(e.data);
+        const countEl = document.getElementById('answer-count');
+        if (countEl) {
+            countEl.textContent = data.answers_in + '/' + data.total_teams + ' teams answered';
+        }
+    });
+
+    es.addEventListener('all_answered', function(e) {
+        const countEl = document.getElementById('answer-count');
+        if (countEl) {
+            countEl.textContent = 'All teams have answered!';
+        }
+    });
+
+    es.addEventListener('state_change', function(e) {
+        refreshGameState();
+    });
+
+    es.addEventListener('score_update', function(e) {
+        refreshGameState();
+        refreshTeams();
+    });
+
+    es.addEventListener('head_changed', function(e) {
+        refreshTeams();
+    });
+
+    es.addEventListener('team_removed', function(e) {
+        refreshTeams();
+    });
+</script>
+{{end}}

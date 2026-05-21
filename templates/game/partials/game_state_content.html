@@ -1,0 +1,93 @@
+{{define "game_state_content"}}
+{{if eq .Game.State "lobby"}}
+<div class="text-center py-12">
+    <h2 class="text-3xl font-bold text-yellow-400 mb-4">Waiting for host...</h2>
+    <p class="text-gray-400">The game will start soon. Hang tight!</p>
+    <div id="team-members" class="mt-6">
+        <h3 class="text-gray-300 text-sm font-semibold mb-2">Your Team</h3>
+        <ul class="text-gray-400 text-sm space-y-1">
+        {{range .Players}}
+            <li>{{.Name}}{{if .IsHead}} 👑{{end}}</li>
+        {{end}}
+        </ul>
+    </div>
+</div>
+
+{{else if eq .Game.State "question"}}
+{{if .CurrentQuestion}}
+<div class="bg-gray-800 rounded-lg p-6 mb-4" id="question-area">
+    {{if .CurrentRound}}
+    <p class="text-sm text-gray-400 mb-2">{{.CurrentRound.Name}}</p>
+    {{end}}
+    <h2 class="text-xl font-semibold mb-4" id="question-text">{{.CurrentQuestion.QuestionText}}</h2>
+    <p class="text-gray-400 text-sm mb-4">Points: {{.CurrentQuestion.Points}} | Type: {{.CurrentQuestion.QuestionType}}</p>
+
+    {{if .CurrentQuestion.VideoFilename.Valid}}
+    <!-- Video question: video and answer hidden until SSE triggers -->
+    <div id="video-container" class="mb-4">
+        <video id="video-player" class="w-full rounded-lg bg-black" preload="metadata">
+            <source src="/static/videos/{{.CurrentQuestion.VideoFilename.String}}" type="video/mp4">
+        </video>
+        <button id="manual-play-btn" class="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm hidden">
+            Play Video
+        </button>
+    </div>
+    <div id="question-reveal" class="hidden">
+        {{template "answer_area" .}}
+    </div>
+    {{end}}
+
+    {{if not .CurrentQuestion.VideoFilename.Valid}}
+    <!-- Text question: answer input visible immediately -->
+    {{template "answer_area" .}}
+    {{end}}
+</div>
+{{end}}
+
+{{else if eq .Game.State "round_reveal"}}
+<div class="space-y-4">
+    <h2 class="text-2xl font-bold text-yellow-400 mb-4">Round Complete! 🎉</h2>
+    {{if .RoundQuestions}}
+    {{range .RoundQuestions}}
+    {{$qID := .ID}}
+    <div class="bg-gray-800 rounded-lg p-4">
+        <h3 class="font-semibold">{{.QuestionText}}</h3>
+        <p class="text-green-400 text-sm">Correct answer: {{.CorrectAnswer}}</p>
+        {{range $.TeamAnswers}}
+        {{if eq .QuestionID $qID}}
+        <p class="text-gray-300 text-sm">Your answer: {{.AnswerText}}
+            {{if .IsCorrect.Valid}}{{if eq .IsCorrect.Int64 1}}✅{{else}}❌{{end}}
+            {{end}}
+        </p>
+        {{end}}
+        {{end}}
+    </div>
+    {{end}}
+    {{end}}
+
+    {{if .Leaderboard}}
+    <div class="bg-gray-800 rounded-lg p-4 mt-4">
+        <h3 class="text-lg font-semibold mb-3">Leaderboard</h3>
+        <table class="w-full">
+            <thead><tr class="text-gray-400 text-sm"><th class="text-left">Rank</th><th class="text-left">Team</th><th class="text-right">Score</th></tr></thead>
+            <tbody>
+            {{range $i, $t := .Leaderboard}}
+            <tr class="{{if eq $i 0}}text-yellow-400{{end}}">
+                <td>{{add $i 1}}</td><td>{{$t.Name}}</td><td class="text-right">{{$t.Score}}</td>
+            </tr>
+            {{end}}
+            </tbody>
+        </table>
+    </div>
+    {{end}}
+</div>
+
+{{else if eq .Game.State "ended"}}
+<div class="text-center py-12">
+    <h2 class="text-3xl font-bold text-green-400 mb-4">Game Over! 🎉</h2>
+    <a href="/game/{{.Code}}/results" class="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white transition inline-block">
+        View Final Results →
+    </a>
+</div>
+{{end}}
+{{end}}

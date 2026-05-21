@@ -1,0 +1,87 @@
+{{define "game_panel_game_state"}}
+<div id="game-state" class="space-y-4">
+    <!-- State Info -->
+    <div class="bg-gray-800 rounded-lg p-4">
+        <p class="text-lg font-semibold">State: <span class="text-yellow-400" id="state-text">{{.Game.State}}</span></p>
+        {{if .CurrentQuestion}}
+        <p class="text-gray-300">Current Question: {{.CurrentQuestion.QuestionText}}</p>
+        <p class="text-gray-400 text-sm">Type: {{.CurrentQuestion.QuestionType}} | Points: {{.CurrentQuestion.Points}}</p>
+        {{end}}
+    </div>
+
+    <!-- Controls -->
+    <div class="bg-gray-800 rounded-lg p-4 space-y-3" id="controls">
+        {{if eq .Game.State "lobby"}}
+        <form hx-post="/admin/game/{{.Code}}/start-round" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/start-round">
+            <button type="submit" class="w-full py-3 px-4 bg-green-600 hover:bg-green-700 rounded-lg font-semibold text-white transition">
+                ▶️ Start Round
+            </button>
+        </form>
+        {{end}}
+
+        {{if eq .Game.State "question"}}
+        {{if .CurrentQuestion}}
+        {{if .CurrentQuestion.VideoFilename.Valid}}
+        <div class="flex gap-3">
+            <form hx-post="/admin/game/{{.Code}}/video-play" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/video-play">
+                <button type="submit" class="py-2 px-4 bg-purple-600 hover:bg-purple-700 rounded-lg font-semibold text-white transition">
+                    🎬 Play Video
+                </button>
+            </form>
+            <form hx-post="/admin/game/{{.Code}}/show-question" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/show-question">
+                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition">
+                    👁 Show Question
+                </button>
+            </form>
+        </div>
+        {{end}}
+        <div class="flex gap-3">
+            <form hx-post="/admin/game/{{.Code}}/next" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/next">
+                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition">
+                    ⏭ Next Question
+                </button>
+            </form>
+            <form hx-post="/admin/game/{{.Code}}/end-round" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/end-round">
+                <button type="submit" class="py-2 px-4 bg-orange-600 hover:bg-orange-700 rounded-lg font-semibold text-white transition">
+                    ⏹ End Round
+                </button>
+            </form>
+        </div>
+        {{end}}
+        {{end}}
+
+        {{if eq .Game.State "round_reveal"}}
+        <div class="flex gap-3">
+            <form hx-post="/admin/game/{{.Code}}/start-round" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/start-round">
+                <button type="submit" class="py-2 px-4 bg-green-600 hover:bg-green-700 rounded-lg font-semibold text-white transition">
+                    ▶️ Start Next Round
+                </button>
+            </form>
+            <form hx-post="/admin/game/{{.Code}}/end-game" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/end-game">
+                <button type="submit" class="py-2 px-4 bg-red-600 hover:bg-red-700 rounded-lg font-semibold text-white transition">
+                    🏁 End Game
+                </button>
+            </form>
+        </div>
+        {{end}}
+
+        {{if eq .Game.State "ended"}}
+        <p class="text-lg text-green-400 font-semibold">Game Over! 🎉</p>
+        {{end}}
+    </div>
+
+    <!-- Answer tracking -->
+    <div class="bg-gray-800 rounded-lg p-4" id="answer-tracking">
+        <h3 class="text-lg font-semibold mb-2">Answer Status</h3>
+        <p class="text-gray-300" id="answer-count">{{if .AnsweredCount}}{{.AnsweredCount}}/{{.TotalTeams}} teams answered{{else}}Waiting for answers...{{end}}</p>
+    </div>
+
+    <!-- Round Reveal: Open answer marking -->
+    {{if eq .Game.State "round_reveal"}}
+    <div class="bg-gray-800 rounded-lg p-4" id="mark-answers">
+        <h3 class="text-lg font-semibold mb-2">Mark Open Answers</h3>
+        <p class="text-gray-400 text-sm">Use this section to mark open answers as correct or incorrect.</p>
+    </div>
+    {{end}}
+</div>
+{{end}}

@@ -1,0 +1,121 @@
+{{template "base.html" .}}
+
+{{define "title"}}Game - {{.Code}} - PopQuiz{{end}}
+
+{{define "content"}}
+<div class="max-w-2xl mx-auto p-8" id="game-container">
+    <div class="flex justify-between items-center mb-6" id="team-header">
+        <div>
+            <h1 class="text-2xl font-bold text-indigo-400">{{.Team.Name}}</h1>
+            {{if .IsHead}}<p class="text-yellow-400 text-sm">👑 You are the Team Head</p>{{else}}<p class="text-gray-400 text-sm">Team Member</p>{{end}}
+        </div>
+        <div class="text-right">
+            <p class="text-gray-400 text-sm">Room Code</p>
+            <p class="text-2xl font-mono font-bold text-green-400">{{.Code}}</p>
+        </div>
+    </div>
+
+    <div id="game-state-content">
+        {{template "game_state_content" .}}
+    </div>
+</div>
+
+<script>
+    const roomCode = "{{.Code}}";
+    const es = new EventSource('/game/' + roomCode + '/events');
+    const gameState = "{{.Game.State}}";
+
+    function refreshGameState() {
+        htmx.ajax('GET', '/game/' + roomCode + '/partial', {
+            target: '#game-state-content',
+            swap: 'innerHTML'
+        });
+    }
+
+    function refreshTeamHeader() {
+        htmx.ajax('GET', '/game/' + roomCode + '/team-info', {
+            target: '#team-header',
+            swap: 'outerHTML'
+        });
+    }
+
+    function setupVideoPlayer() {
+        const videoEl = document.getElementById('video-player');
+        if (videoEl) {
+            videoEl.addEventListener('ended', function() {
+                const manualBtn = document.getElementById('manual-play-btn');
+                if (manualBtn) {
+                    manualBtn.classList.add('hidden');
+                }
+                videoEl.controls = false;
+            });
+
+            const manualBtn = document.getElementById('manual-play-btn');
+            if (manualBtn) {
+                manualBtn.classList.remove('hidden');
+                manualBtn.addEventListener('click', function() {
+                    videoEl.play();
+                });
+            }
+        }
+    }
+
+    // Initial setup
+    setupVideoPlayer();
+
+    // Re-setup video player after HTMX swaps
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        setupVideoPlayer();
+    });
+
+    es.addEventListener('state_change', function(e) {
+        refreshGameState();
+    });
+
+    es.addEventListener('video_play', function(e) {
+        const video = document.getElementById('video-player');
+        if (video) {
+            video.play().catch(function(err) {
+                console.log('Autoplay blocked:', err);
+            });
+        }
+    });
+
+    es.addEventListener('show_question', function(e) {
+        const reveal = document.getElementById('question-reveal');
+        if (reveal) {
+            reveal.classList.remove('hidden');
+        }
+        const manualBtn = document.getElementById('manual-play-btn');
+        if (manualBtn) {
+            manualBtn.classList.add('hidden');
+        }
+    });
+
+    es.addEventListener('answer_accepted', function(e) {
+        // Handled by HTMX form submission - no action needed
+    });
+
+    es.addEventListener('round_reveal', function(e) {
+        refreshGameState();
+    });
+
+    es.addEventListener('score_update', function(e) {
+        refreshGameState();
+    });
+
+    es.addEventListener('head_change', function(e) {
+        refreshTeamHeader();
+        refreshGameState();
+    });
+
+    es.addEventListener('game_ended', function(e) {
+        window.location.href = '/game/' + roomCode + '/results';
+    });
+
+    es.addEventListener('removed', function(e) {
+        document.cookie = 'player_session=; Path=/; Max-Age=0';
+        window.location.href = '/';
+    });
+</script>
+{{end}}
