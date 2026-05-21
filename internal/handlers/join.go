@@ -22,22 +22,17 @@ type JoinHandler struct {
 	db            *sql.DB
 	broker        *sse.Broker
 	sessionSecret string
-	templates     *template.Template
 }
 
 func NewJoinHandler(db *sql.DB, broker *sse.Broker, sessionSecret string) *JoinHandler {
-	tmpl := template.Must(template.New("").Funcs(template.FuncMap{
-		"ne": func(a, b interface{}) bool { return a != b },
-	}).ParseFiles(
-		"templates/base.html",
-		"templates/join.html",
-		"templates/team_select.html",
-	))
-	return &JoinHandler{
-		db:            db,
-		broker:        broker,
-		sessionSecret: sessionSecret,
-		templates:     tmpl,
+	return &JoinHandler{db: db, broker: broker, sessionSecret: sessionSecret}
+}
+
+func (h *JoinHandler) render(w http.ResponseWriter, data interface{}, name string, files ...string) {
+	allFiles := append([]string{"templates/base.html"}, files...)
+	tmpl := template.Must(template.New("").ParseFiles(allFiles...))
+	if err := tmpl.ExecuteTemplate(w, name, data); err != nil {
+		log.Printf("render error (%s): %v", name, err)
 	}
 }
 
@@ -49,7 +44,7 @@ func (h *JoinHandler) GetJoin(w http.ResponseWriter, r *http.Request) {
 		Error string
 	}
 	data := pageData{Code: code}
-	h.templates.ExecuteTemplate(w, "join.html", data)
+	h.render(w, data, "join.html", "templates/join.html")
 }
 
 // PostJoinRoom handles the room code form submission, redirects to team selection.
@@ -66,7 +61,7 @@ func (h *JoinHandler) PostJoinRoom(w http.ResponseWriter, r *http.Request) {
 			Code  string
 			Error string
 		}
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "Room code must be 6 characters"})
+		h.render(w, pageData{Code: code, Error: "Room code must be 6 characters"}, "join.html", "templates/join.html")
 		return
 	}
 
@@ -83,7 +78,7 @@ func (h *JoinHandler) PostJoinRoom(w http.ResponseWriter, r *http.Request) {
 			Code  string
 			Error string
 		}
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "Game not found"})
+		h.render(w, pageData{Code: code, Error: "Game not found"}, "join.html", "templates/join.html")
 		return
 	}
 	if err != nil {
@@ -92,7 +87,7 @@ func (h *JoinHandler) PostJoinRoom(w http.ResponseWriter, r *http.Request) {
 			Code  string
 			Error string
 		}
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "An error occurred"})
+		h.render(w, pageData{Code: code, Error: "An error occurred"}, "join.html", "templates/join.html")
 		return
 	}
 
@@ -101,7 +96,7 @@ func (h *JoinHandler) PostJoinRoom(w http.ResponseWriter, r *http.Request) {
 			Code  string
 			Error string
 		}
-		h.templates.ExecuteTemplate(w, "join.html", pageData{Code: code, Error: "Game has ended"})
+		h.render(w, pageData{Code: code, Error: "Game has ended"}, "join.html", "templates/join.html")
 		return
 	}
 
@@ -173,7 +168,7 @@ func (h *JoinHandler) GetTeamSelect(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := pageData{Code: code, Teams: teams}
-	h.templates.ExecuteTemplate(w, "team_select.html", data)
+	h.render(w, data, "team_select.html", "templates/team_select.html")
 }
 
 // PostJoinTeam handles joining an existing team.
