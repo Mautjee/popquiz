@@ -15,26 +15,27 @@
     {{if .CurrentRound}}
     <p class="text-sm text-gray-400 mb-2">{{.CurrentRound.Name}}</p>
     {{end}}
-    <h2 class="text-xl font-semibold mb-4" id="question-text">{{.CurrentQuestion.QuestionText}}</h2>
-    <p class="text-gray-400 text-sm mb-4">Points: {{.CurrentQuestion.Points}} | Type: {{.CurrentQuestion.QuestionType}}</p>
 
     {{if .CurrentQuestion.VideoFilename.Valid}}
-    <!-- Video question: video and answer hidden until SSE triggers -->
-    <div id="video-container" class="mb-4">
+    <!-- Video question: video shown first, question hidden until show_question -->
+    <div id="video-container" class="mb-4" {{if .ShowQuestion}}style="display:none"{{end}}>
         <video id="video-player" class="w-full rounded-lg bg-black" preload="metadata">
             <source src="/static/videos/{{.CurrentQuestion.VideoFilename.String}}" type="video/mp4">
         </video>
-        <button id="manual-play-btn" class="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm hidden">
-            Play Video
+        <button id="manual-play-btn" class="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm"
+                onclick="this.style.display='none'; document.getElementById('video-player').play();">
+            ▶ Play Video
         </button>
     </div>
-    <div id="question-reveal"{{if not .ShowQuestion}} class="hidden"{{end}}>
+    <div id="question-reveal" {{if not .ShowQuestion}}class="hidden"{{end}}>
+        <h2 class="text-xl font-semibold mb-4" id="question-text">{{.CurrentQuestion.QuestionText}}</h2>
+        <p class="text-gray-400 text-sm mb-4">Points: {{.CurrentQuestion.Points}} | Type: {{.CurrentQuestion.QuestionType}}</p>
         {{template "answer_area" .}}
     </div>
-    {{end}}
-
-    {{if not .CurrentQuestion.VideoFilename.Valid}}
-    <!-- Text question: answer input visible immediately -->
+    {{else}}
+    <!-- Text question: question and answer visible immediately -->
+    <h2 class="text-xl font-semibold mb-4" id="question-text">{{.CurrentQuestion.QuestionText}}</h2>
+    <p class="text-gray-400 text-sm mb-4">Points: {{.CurrentQuestion.Points}} | Type: {{.CurrentQuestion.QuestionType}}</p>
     {{template "answer_area" .}}
     {{end}}
 </div>

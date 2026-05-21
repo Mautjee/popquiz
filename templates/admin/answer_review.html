@@ -1,0 +1,47 @@
+{{template "base.html" .}}
+
+{{define "title"}}Review Answers - {{.Code}} - PopQuiz{{end}}
+
+{{define "content"}}
+<div class="max-w-4xl mx-auto p-8">
+    <div class="flex justify-between items-center mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-indigo-400">📋 Review Answers</h1>
+            <p class="text-gray-400 mt-1">{{.RoundName}}</p>
+        </div>
+        <a href="/admin/game/{{.Code}}" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg text-white transition">
+            ← Back to Game Panel
+        </a>
+    </div>
+
+    {{range .QuestionAnswers}}
+    <div class="bg-gray-800 rounded-lg p-6 mb-6">
+        <div class="flex items-center gap-3 mb-4">
+            <h2 class="text-xl font-semibold">{{.Question.QuestionText}}</h2>
+            <span class="text-xs px-2 py-1 rounded {{if eq .Question.QuestionType "open"}}bg-yellow-500/20 text-yellow-300{{else if eq .Question.QuestionType "ranged"}}bg-blue-500/20 text-blue-300{{else}}bg-green-500/20 text-green-300{{end}}">
+                {{.Question.QuestionType}}
+            </span>
+            <span class="text-gray-400 text-sm">{{.Question.Points}}pt</span>
+        </div>
+
+        {{if ne .Question.QuestionType "open"}}
+        <p class="text-green-400 text-sm mb-3">Correct answer: <span class="font-mono">{{.Question.CorrectAnswer}}</span></p>
+        {{end}}
+
+        {{if .Answers}}
+        <div class="space-y-2">
+            {{range .Answers}}
+            {{template "answer_row" .}}
+            {{end}}
+        </div>
+        {{else}}
+        <p class="text-gray-400 text-sm italic">No answers yet</p>
+        {{end}}
+    </div>
+    {{end}}
+
+    {{if not .QuestionAnswers}}
+    <p class="text-gray-400 text-center py-8">No questions in this round</p>
+    {{end}}
+</div>
+{{end}}

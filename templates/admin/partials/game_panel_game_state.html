@@ -29,7 +29,7 @@
                 </button>
             </form>
             <form hx-post="/admin/game/{{.Code}}/show-question" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/show-question">
-                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition">
+                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition {{if .ShowQuestion}}opacity-50 cursor-not-allowed{{end}}" {{if .ShowQuestion}}disabled{{end}}>
                     👁 Show Question
                 </button>
             </form>
@@ -37,7 +37,7 @@
         {{end}}
         <div class="flex gap-3">
             <form hx-post="/admin/game/{{.Code}}/next" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/next">
-                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition">
+                <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition {{if not .HasNextQuestion}}opacity-50 cursor-not-allowed{{end}}" {{if not .HasNextQuestion}}disabled{{end}}>
                     ⏭ Next Question
                 </button>
             </form>
@@ -51,6 +51,11 @@
         {{end}}
 
         {{if eq .Game.State "round_reveal"}}
+        <div class="flex gap-3">
+            <a href="/admin/game/{{.Code}}/answers" class="py-2 px-4 bg-yellow-600 hover:bg-yellow-700 rounded-lg font-semibold text-white transition inline-block">
+                📋 Review Answers
+            </a>
+        </div>
         <div class="flex gap-3">
             <form hx-post="/admin/game/{{.Code}}/start-round" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/start-round">
                 <button type="submit" class="py-2 px-4 bg-green-600 hover:bg-green-700 rounded-lg font-semibold text-white transition">
@@ -91,7 +96,7 @@
     {{if eq .Game.State "round_reveal"}}
     <div class="bg-gray-800 rounded-lg p-4" id="mark-answers">
         <h3 class="text-lg font-semibold mb-2">Mark Open Answers</h3>
-        <p class="text-gray-400 text-sm">Use this section to mark open answers as correct or incorrect.</p>
+        <p class="text-gray-400 text-sm">Use "Review Answers" to approve or deny open answers.</p>
     </div>
     {{end}}
 </div>

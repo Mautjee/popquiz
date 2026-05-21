@@ -9,14 +9,26 @@
         <form hx-post="/game/{{.Code}}/answer" hx-target="#answer-area" hx-swap="outerHTML" class="space-y-3" id="answer-form">
             <input type="hidden" name="question_id" value="{{.CurrentQuestion.ID}}">
             {{if eq .CurrentQuestion.QuestionType "multiple_choice"}}
+            {{if .CurrentQuestion.Options.Valid}}
+            <input type="hidden" name="answer_text" id="mc-answer-input" value="">
             <div class="space-y-2" id="mc-options">
-                {{if .CurrentQuestion.Options.Valid}}
-                {{$opts := .CurrentQuestion.Options}}
-                <!-- Options rendered as radio buttons by JS -->
+                {{range $i, $opt := .MCOptions}}
+                <button type="button" onclick="selectMCOption(this, '{{$opt.Letter}}')"
+                        class="mc-option-btn w-full text-left px-4 py-3 bg-gray-700 border border-gray-600 rounded-lg hover:border-indigo-500 hover:bg-gray-600 transition cursor-pointer">
+                    <span class="font-semibold text-indigo-400 mr-2">{{$opt.Letter}}.</span>
+                    <span>{{$opt.Text}}</span>
+                </button>
                 {{end}}
             </div>
+            {{end}}
+            {{else if eq .CurrentQuestion.QuestionType "ranged"}}
+            <input type="number" step="any"
+                   name="answer_text" required
+                   class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                   placeholder="Enter a number"
+                   {{if .PreviousAnswer}}value="{{.PreviousAnswer}}"{{end}}>
             {{else}}
-            <input type="{{if eq .CurrentQuestion.QuestionType "ranged"}}number{{else}}text{{end}}"
+            <input type="text"
                    name="answer_text" required
                    class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                    placeholder="Your answer"
@@ -26,9 +38,23 @@
                 Submit Answer
             </button>
         </form>
+        <script>
+        function selectMCOption(btn, letter) {
+            // Clear previous selection
+            document.querySelectorAll('.mc-option-btn').forEach(function(b) {
+                b.classList.remove('border-indigo-500', 'bg-indigo-600');
+                b.classList.add('border-gray-600', 'bg-gray-700');
+            });
+            // Highlight selected
+            btn.classList.remove('border-gray-600', 'bg-gray-700');
+            btn.classList.add('border-indigo-500', 'bg-indigo-600');
+            // Set hidden input
+            document.getElementById('mc-answer-input').value = letter;
+        }
+        </script>
         {{end}}
     {{else}}
-    <p class="text-gray-400 italic">Your Team Head is answering...</p>
+    <p class="text-gray-400 italic">Waiting for your team head to answer...</p>
     {{end}}
 </div>
 {{end}}

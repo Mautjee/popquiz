@@ -4,16 +4,7 @@
 
 {{define "content"}}
 <div class="max-w-2xl mx-auto p-8" id="game-container">
-    <div class="flex justify-between items-center mb-6" id="team-header">
-        <div>
-            <h1 class="text-2xl font-bold text-indigo-400">{{.Team.Name}}</h1>
-            {{if .IsHead}}<p class="text-yellow-400 text-sm">👑 You are submitting</p>{{else}}<p class="text-gray-400 text-sm">Watching</p>{{end}}
-        </div>
-        <div class="text-right">
-            <p class="text-gray-400 text-sm">Room Code</p>
-            <p class="text-2xl font-mono font-bold text-green-400">{{.Code}}</p>
-        </div>
-    </div>
+    {{template "team_header" .}}
 
     <div id="game-state-content">
         {{template "game_state_content" .}}
@@ -41,22 +32,14 @@
 
     function setupVideoPlayer() {
         const videoEl = document.getElementById('video-player');
+        const manualBtn = document.getElementById('manual-play-btn');
         if (videoEl) {
             videoEl.addEventListener('ended', function() {
-                const manualBtn = document.getElementById('manual-play-btn');
                 if (manualBtn) {
                     manualBtn.classList.add('hidden');
                 }
                 videoEl.controls = false;
             });
-
-            const manualBtn = document.getElementById('manual-play-btn');
-            if (manualBtn) {
-                manualBtn.classList.remove('hidden');
-                manualBtn.addEventListener('click', function() {
-                    videoEl.play();
-                });
-            }
         }
     }
 
@@ -82,14 +65,8 @@
     });
 
     es.addEventListener('show_question', function(e) {
-        const reveal = document.getElementById('question-reveal');
-        if (reveal) {
-            reveal.classList.remove('hidden');
-        }
-        const manualBtn = document.getElementById('manual-play-btn');
-        if (manualBtn) {
-            manualBtn.classList.add('hidden');
-        }
+        // Re-render the entire game state content via HTMX
+        refreshGameState();
     });
 
     es.addEventListener('answer_accepted', function(e) {
