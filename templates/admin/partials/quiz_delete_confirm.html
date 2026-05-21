@@ -1,0 +1,21 @@
+{{define "quiz_delete_confirm"}}
+<div id="quiz-row-{{.ID}}" class="bg-gray-800 rounded-lg p-6 flex justify-between items-center border-2 border-red-500">
+    <div>
+        <h2 class="text-xl font-semibold text-red-400">{{.Title}}</h2>
+        <p class="text-gray-300 text-sm">Delete this quiz and all its data?</p>
+    </div>
+    <div class="flex gap-3">
+        <form method="POST" action="/admin/quiz/{{.ID}}/delete">
+            <button type="submit" class="px-4 py-2 bg-red-600 hover:bg-red-700 rounded-lg text-white transition text-sm font-semibold">
+                Yes, delete
+            </button>
+        </form>
+        <button hx-get="/admin/quiz/{{.ID}}/row"
+                hx-target="#quiz-row-{{.ID}}"
+                hx-swap="outerHTML"
+                class="px-4 py-2 bg-gray-600 hover:bg-gray-500 rounded-lg text-white transition text-sm">
+            Cancel
+        </button>
+    </div>
+</div>
+{{end}}

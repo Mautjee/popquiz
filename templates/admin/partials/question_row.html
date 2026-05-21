@@ -1,11 +1,34 @@
 {{define "question_row"}}
-<div id="question-{{.Question.ID}}" class="bg-gray-700 rounded p-3 flex justify-between items-center">
-    <div>
-        <span class="text-gray-400 text-sm">{{.Question.QuestionType}}</span>
-        <p class="font-medium">{{.Question.QuestionText}}</p>
-        <p class="text-sm text-gray-400">Answer: {{.Question.CorrectAnswer}} | Points: {{.Question.Points}}</p>
-        {{if .Question.Options.Valid}}<p class="text-sm text-gray-400">Options: {{.Question.Options.String}}</p>{{end}}
-        {{if .Question.VideoFilename.Valid}}<p class="text-sm text-purple-400">📹 {{.Question.VideoFilename.String}}</p>{{end}}
+<div id="question-{{.Question.ID}}" class="question-row bg-gray-700 rounded p-3 flex justify-between items-center"
+     draggable="true"
+     data-question-id="{{.Question.ID}}"
+     ondragstart="dragStart(event)"
+     ondragover="dragOver(event)"
+     ondrop="drop(event, {{.Question.RoundID}})">
+    <div class="flex items-center gap-2">
+        <span class="text-gray-500 cursor-move" title="Drag to reorder">≡</span>
+        <div>
+            <span class="text-gray-400 text-sm">{{.Question.QuestionType}}</span>
+            <p class="font-medium">{{.Question.QuestionText}}</p>
+            <p class="text-sm text-gray-400">Answer: {{.Question.CorrectAnswer}} | Points: {{.Question.Points}}</p>
+            {{if .Question.Options.Valid}}<p class="text-sm text-gray-400">Options: {{.Question.Options.String}}</p>{{end}}
+            {{if .Question.VideoFilename.Valid}}
+            <div id="video-section-{{.Question.ID}}" class="flex items-center gap-2 mt-1">
+                <span class="text-sm text-purple-400">📹 {{.Question.VideoFilename.String}}</span>
+                <a href="/static/videos/{{.Question.VideoFilename.String}}" target="_blank" class="text-blue-400 hover:text-blue-300 text-xs">▶ Preview</a>
+                <button hx-post="/admin/quiz/{{.QuizID}}/question/{{.Question.ID}}/delete-video"
+                        hx-target="#video-section-{{.Question.ID}}"
+                        hx-swap="outerHTML"
+                        hx-confirm="Delete this video?"
+                        class="text-red-400 hover:text-red-300 text-xs">🗑 Delete video</button>
+            </div>
+            {{end}}
+            {{if .Question.ImageFilename.Valid}}
+            <div class="mt-1">
+                <img src="/images/{{.Question.ImageFilename.String}}" class="h-12 w-12 object-cover rounded inline-block">
+            </div>
+            {{end}}
+        </div>
     </div>
     <div class="flex gap-2">
         <button hx-get="/admin/quiz/{{.QuizID}}/question/{{.Question.ID}}/edit"
@@ -21,6 +44,16 @@
                 class="text-red-400 hover:text-red-300 text-sm px-2 py-1">
             🗑
         </button>
+    </div>
+</div>
+{{end}}
+
+{{define "video_upload_form"}}
+<div id="video-section-{{.ID}}">
+    <div>
+        <label class="block text-sm font-medium text-gray-300 mb-1">Video Clip</label>
+        <input type="file" name="video_file" accept="video/*"
+               class="w-full text-gray-300">
     </div>
 </div>
 {{end}}

@@ -177,7 +177,7 @@ func (h *AdminHandler) GetIndex(w http.ResponseWriter, r *http.Request) {
 	data := map[string]interface{}{
 		"Quizzes": quizzes,
 	}
-	h.render(w, data, "index.html", "templates/admin/index.html")
+	h.render(w, data, "index.html", "templates/admin/index.html", "templates/admin/partials/quiz_row.html", "templates/admin/partials/quiz_delete_confirm.html")
 }
 
 // --- Quiz CRUD ---
@@ -259,7 +259,7 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 	var roundsWithQuestions []RoundWithQuestions
 	for _, rd := range rounds {
 		qRows, err := h.db.Query(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 			FROM questions WHERE round_id = ? ORDER BY order_index
 		`, rd.ID)
 		if err != nil {
@@ -269,7 +269,7 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 		var questions []models.Question
 		for qRows.Next() {
 			var q models.Question
-			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 			questions = append(questions, q)
 		}
 		qRows.Close()
@@ -374,6 +374,13 @@ func (h *AdminHandler) PostQuestion(w http.ResponseWriter, r *http.Request) {
 	pointsStr := r.FormValue("points")
 	options := r.FormValue("options")
 
+	// For offline quizzes, force question_type = 'open'
+	var quizMode string
+	h.db.QueryRow("SELECT q.mode FROM quizzes q JOIN rounds r ON r.quiz_id = q.id WHERE r.id = ?", roundID).Scan(&quizMode)
+	if quizMode == "offline" {
+		questionType = "open"
+	}
+
 	points := 1
 	if pointsStr != "" {
 		if p, err := strconv.Atoi(pointsStr); err == nil && p > 0 {
@@ -425,6 +432,36 @@ func (h *AdminHandler) PostQuestion(w http.ResponseWriter, r *http.Request) {
 		videoFilename = sql.NullString{String: filename, Valid: true}
 	}
 
+	// Handle image upload
+	var imageFilename sql.NullString
+	imgFile, imgHeader, err := r.FormFile("image_file")
+	if err == nil {
+		defer imgFile.Close()
+
+		ext := filepath.Ext(imgHeader.Filename)
+		if ext == "" {
+			ext = ".png"
+		}
+		imgName := generateToken() + ext
+		imgPath := filepath.Join(h.dataDir, "images", imgName)
+
+		imgDst, err := os.Create(imgPath)
+		if err != nil {
+			log.Printf("Error creating image file: %v", err)
+			http.Error(w, "Error saving image", http.StatusInternalServerError)
+			return
+		}
+		defer imgDst.Close()
+
+		if _, err := io.Copy(imgDst, imgFile); err != nil {
+			log.Printf("Error writing image file: %v", err)
+			http.Error(w, "Error saving image", http.StatusInternalServerError)
+			return
+		}
+
+		imageFilename = sql.NullString{String: imgName, Valid: true}
+	}
+
 	// Handle options JSON for MC
 	var optionsJSON sql.NullString
 	if questionType == "multiple_choice" && options != "" {
@@ -432,9 +469,9 @@ func (h *AdminHandler) PostQuestion(w http.ResponseWriter, r *http.Request) {
 	}
 
 	_, err = h.db.Exec(`
-		INSERT INTO questions (round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, roundID, questionText, questionType, correctAnswer, optionsJSON, videoFilename, points, orderIndex)
+		INSERT INTO questions (round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, roundID, questionText, questionType, correctAnswer, optionsJSON, videoFilename, imageFilename, points, orderIndex)
 
 	// Get quiz_id for redirect
 	var quizID int64
@@ -450,12 +487,14 @@ func (h *AdminHandler) DeleteQuestion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete video file if exists
-	var videoFilename sql.NullString
-	h.db.QueryRow("SELECT video_filename FROM questions WHERE id = ?", questionID).Scan(&videoFilename)
+	// Delete video and image files if exists
+	var videoFilename, imageFilename sql.NullString
+	h.db.QueryRow("SELECT video_filename, image_filename FROM questions WHERE id = ?", questionID).Scan(&videoFilename, &imageFilename)
 	if videoFilename.Valid && videoFilename.String != "" {
-		videoPath := filepath.Join(h.dataDir, "videos", videoFilename.String)
-		os.Remove(videoPath) // Ignore error
+		os.Remove(filepath.Join(h.dataDir, "videos", videoFilename.String))
+	}
+	if imageFilename.Valid && imageFilename.String != "" {
+		os.Remove(filepath.Join(h.dataDir, "images", imageFilename.String))
 	}
 
 	// Get round_id -> quiz_id for redirect
@@ -484,9 +523,9 @@ func (h *AdminHandler) GetEditQuestion(w http.ResponseWriter, r *http.Request) {
 
 	var q models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 		FROM questions WHERE id = ?
-	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 	if err != nil {
 		http.Error(w, "Question not found", http.StatusNotFound)
 		return
@@ -501,10 +540,15 @@ func (h *AdminHandler) GetEditQuestion(w http.ResponseWriter, r *http.Request) {
 	// Parse MC options
 	mcOpts := parseAdminMCOptions(q.Options)
 
+	// Get quiz mode for conditional UI
+	var quizMode string
+	h.db.QueryRow("SELECT q.mode FROM quizzes q JOIN rounds r ON r.quiz_id = q.id JOIN questions qq ON qq.round_id = r.id WHERE qq.id = ?", questionID).Scan(&quizMode)
+
 	data := map[string]interface{}{
-		"Question": q,
-		"QuizID":  quizID,
+		"Question":  q,
+		"QuizID":   quizID,
 		"MCOptions": mcOpts,
+		"QuizMode":  quizMode,
 	}
 
 	w.Header().Set("Content-Type", "text/html")
@@ -527,9 +571,9 @@ func (h *AdminHandler) GetQuestionRow(w http.ResponseWriter, r *http.Request) {
 
 	var q models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 		FROM questions WHERE id = ?
-	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 	if err != nil {
 		http.Error(w, "Question not found", http.StatusNotFound)
 		return
@@ -538,10 +582,15 @@ func (h *AdminHandler) GetQuestionRow(w http.ResponseWriter, r *http.Request) {
 	type RowData struct {
 		Question models.Question
 		QuizID   int64
+		QuizMode string
 	}
 
+	// Get quiz mode for conditional UI
+	var quizMode string
+	h.db.QueryRow("SELECT q.mode FROM quizzes q JOIN rounds r ON r.quiz_id = q.id JOIN questions qq ON qq.round_id = r.id WHERE qq.id = ?", questionID).Scan(&quizMode)
+
 	w.Header().Set("Content-Type", "text/html")
-	h.renderPartial(w, RowData{Question: q, QuizID: quizID}, "question_row", "templates/admin/partials/question_row.html")
+	h.renderPartial(w, RowData{Question: q, QuizID: quizID, QuizMode: quizMode}, "question_row", "templates/admin/partials/question_row.html")
 }
 
 // PostUpdateQuestion updates a question and returns the updated row partial.
@@ -558,9 +607,12 @@ func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, "Bad request", http.StatusBadRequest)
-		return
+	// Parse multipart form for file uploads
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		if err := r.ParseForm(); err != nil {
+			http.Error(w, "Bad request", http.StatusBadRequest)
+			return
+		}
 	}
 
 	questionText := strings.TrimSpace(r.FormValue("question_text"))
@@ -568,6 +620,13 @@ func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request
 	correctAnswer := strings.TrimSpace(r.FormValue("correct_answer"))
 	pointsStr := r.FormValue("points")
 	options := r.FormValue("options")
+
+	// For offline quizzes, force question_type = 'open'
+	var quizMode string
+	h.db.QueryRow("SELECT q.mode FROM quizzes q JOIN rounds r ON r.quiz_id = q.id JOIN questions qq ON qq.round_id = r.id WHERE qq.id = ?", questionID).Scan(&quizMode)
+	if quizMode == "offline" {
+		questionType = "open"
+	}
 
 	// For MC questions, the correct_answer may come from correct_answer_mc
 	if questionType == "multiple_choice" && correctAnswer == "" {
@@ -591,6 +650,84 @@ func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request
 		optionsJSON = sql.NullString{String: options, Valid: true}
 	}
 
+	// Handle video replacement
+	videoFile, videoHeader, err := r.FormFile("video_file")
+	if err == nil {
+		defer videoFile.Close()
+
+		// Delete old video if exists
+		var oldVideo sql.NullString
+		h.db.QueryRow("SELECT video_filename FROM questions WHERE id = ?", questionID).Scan(&oldVideo)
+		if oldVideo.Valid && oldVideo.String != "" {
+			os.Remove(filepath.Join(h.dataDir, "videos", oldVideo.String))
+		}
+
+		ext := filepath.Ext(videoHeader.Filename)
+		if ext == "" {
+			ext = ".mp4"
+		}
+		filename := generateToken() + ext
+		videoPath := filepath.Join(h.dataDir, "videos", filename)
+
+		dst, err := os.Create(videoPath)
+		if err != nil {
+			log.Printf("Error creating video file: %v", err)
+			http.Error(w, "Error saving video", http.StatusInternalServerError)
+			return
+		}
+		defer dst.Close()
+
+		if _, err := io.Copy(dst, videoFile); err != nil {
+			log.Printf("Error writing video file: %v", err)
+			http.Error(w, "Error saving video", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = h.db.Exec("UPDATE questions SET video_filename = ? WHERE id = ?", filename, questionID)
+		if err != nil {
+			log.Printf("Error updating video_filename: %v", err)
+		}
+	}
+
+	// Handle image replacement
+	imgFile, imgHeader, err := r.FormFile("image_file")
+	if err == nil {
+		defer imgFile.Close()
+
+		// Delete old image if exists
+		var oldImage sql.NullString
+		h.db.QueryRow("SELECT image_filename FROM questions WHERE id = ?", questionID).Scan(&oldImage)
+		if oldImage.Valid && oldImage.String != "" {
+			os.Remove(filepath.Join(h.dataDir, "images", oldImage.String))
+		}
+
+		ext := filepath.Ext(imgHeader.Filename)
+		if ext == "" {
+			ext = ".png"
+		}
+		imgName := generateToken() + ext
+		imgPath := filepath.Join(h.dataDir, "images", imgName)
+
+		imgDst, err := os.Create(imgPath)
+		if err != nil {
+			log.Printf("Error creating image file: %v", err)
+			http.Error(w, "Error saving image", http.StatusInternalServerError)
+			return
+		}
+		defer imgDst.Close()
+
+		if _, err := io.Copy(imgDst, imgFile); err != nil {
+			log.Printf("Error writing image file: %v", err)
+			http.Error(w, "Error saving image", http.StatusInternalServerError)
+			return
+		}
+
+		_, err = h.db.Exec("UPDATE questions SET image_filename = ? WHERE id = ?", imgName, questionID)
+		if err != nil {
+			log.Printf("Error updating image_filename: %v", err)
+		}
+	}
+
 	_, err = h.db.Exec(`
 		UPDATE questions SET question_text = ?, question_type = ?, correct_answer = ?, options = ?, points = ?
 		WHERE id = ?
@@ -604,18 +741,22 @@ func (h *AdminHandler) PostUpdateQuestion(w http.ResponseWriter, r *http.Request
 	// Return the updated question row
 	var q models.Question
 	h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 		FROM questions WHERE id = ?
-	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+	`, questionID).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 
 	type RowData struct {
 		Question models.Question
 		QuizID   int64
+		QuizMode string
 	}
 
+	h.db.QueryRow("SELECT q.mode FROM quizzes q JOIN rounds r ON r.quiz_id = q.id JOIN questions qq ON qq.round_id = r.id WHERE qq.id = ?", questionID).Scan(&quizMode)
+
 	w.Header().Set("Content-Type", "text/html")
-	h.renderPartial(w, RowData{Question: q, QuizID: quizID}, "question_row", "templates/admin/partials/question_row.html")
+	h.renderPartial(w, RowData{Question: q, QuizID: quizID, QuizMode: quizMode}, "question_row", "templates/admin/partials/question_row.html")
 }
+
 func (h *AdminHandler) DeleteQuestionRoute(w http.ResponseWriter, r *http.Request) {
 	questionID, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
 	if err != nil {
@@ -623,12 +764,14 @@ func (h *AdminHandler) DeleteQuestionRoute(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Delete video file if exists
-	var videoFilename sql.NullString
-	h.db.QueryRow("SELECT video_filename FROM questions WHERE id = ?", questionID).Scan(&videoFilename)
+	// Delete video and image files if exists
+	var videoFilename, imageFilename sql.NullString
+	h.db.QueryRow("SELECT video_filename, image_filename FROM questions WHERE id = ?", questionID).Scan(&videoFilename, &imageFilename)
 	if videoFilename.Valid && videoFilename.String != "" {
-		videoPath := filepath.Join(h.dataDir, "videos", videoFilename.String)
-		os.Remove(videoPath)
+		os.Remove(filepath.Join(h.dataDir, "videos", videoFilename.String))
+	}
+	if imageFilename.Valid && imageFilename.String != "" {
+		os.Remove(filepath.Join(h.dataDir, "images", imageFilename.String))
 	}
 
 	_, err = h.db.Exec("DELETE FROM questions WHERE id = ?", questionID)
@@ -639,6 +782,226 @@ func (h *AdminHandler) DeleteQuestionRoute(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// PostDeleteVideo removes a question's video file.
+func (h *AdminHandler) PostDeleteVideo(w http.ResponseWriter, r *http.Request) {
+	questionID, err := strconv.ParseInt(chi.URLParam(r, "qid"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid question ID", http.StatusBadRequest)
+		return
+	}
+
+	var videoFilename sql.NullString
+	err = h.db.QueryRow("SELECT video_filename FROM questions WHERE id = ?", questionID).Scan(&videoFilename)
+	if err != nil {
+		http.Error(w, "Question not found", http.StatusNotFound)
+		return
+	}
+
+	if videoFilename.Valid && videoFilename.String != "" {
+		os.Remove(filepath.Join(h.dataDir, "videos", videoFilename.String))
+		_, err = h.db.Exec("UPDATE questions SET video_filename = NULL WHERE id = ?", questionID)
+		if err != nil {
+			log.Printf("Error clearing video_filename: %v", err)
+			http.Error(w, "Error deleting video", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Return just the video section (now showing upload form)
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `<div id="video-section-%d"><div><label class="block text-sm font-medium text-gray-300 mb-1">Video Clip</label><input type="file" name="video_file" accept="video/*" class="w-full text-gray-300 text-sm"></div></div>`, questionID)
+}
+
+// PostReorderQuestions updates the order_index of questions within a round.
+func (h *AdminHandler) PostReorderQuestions(w http.ResponseWriter, r *http.Request) {
+	roundID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid round ID", http.StatusBadRequest)
+		return
+	}
+
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Bad request", http.StatusBadRequest)
+		return
+	}
+
+	questionIDs := r.Form["question_ids"]
+	if len(questionIDs) == 0 {
+		http.Error(w, "No question IDs provided", http.StatusBadRequest)
+		return
+	}
+
+	// Validate all IDs belong to the round
+	for _, qidStr := range questionIDs {
+		qid, err := strconv.ParseInt(qidStr, 10, 64)
+		if err != nil {
+			http.Error(w, "Invalid question ID", http.StatusBadRequest)
+			return
+		}
+		var rid int64
+		if err := h.db.QueryRow("SELECT round_id FROM questions WHERE id = ?", qid).Scan(&rid); err != nil {
+			http.Error(w, "Question not found", http.StatusNotFound)
+			return
+		}
+		if rid != roundID {
+			http.Error(w, "Question does not belong to this round", http.StatusForbidden)
+			return
+		}
+	}
+
+	// Update order_index for each question
+	for i, qidStr := range questionIDs {
+		qid, _ := strconv.ParseInt(qidStr, 10, 64)
+		_, err := h.db.Exec("UPDATE questions SET order_index = ? WHERE id = ?", i, qid)
+		if err != nil {
+			log.Printf("Error updating question order: %v", err)
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+// PostDeleteQuiz deletes a quiz and all related data.
+func (h *AdminHandler) PostDeleteQuiz(w http.ResponseWriter, r *http.Request) {
+	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid quiz ID", http.StatusBadRequest)
+		return
+	}
+
+	// Get all video and image filenames for questions in this quiz
+	rows, err := h.db.Query(`
+		SELECT q.video_filename, q.image_filename FROM questions q
+		JOIN rounds r ON q.round_id = r.id
+		WHERE r.quiz_id = ? AND (q.video_filename IS NOT NULL OR q.image_filename IS NOT NULL)
+	`, quizID)
+	if err != nil {
+		log.Printf("Error querying files: %v", err)
+	} else {
+		for rows.Next() {
+			var vf, imf sql.NullString
+			rows.Scan(&vf, &imf)
+			if vf.Valid && vf.String != "" {
+				os.Remove(filepath.Join(h.dataDir, "videos", vf.String))
+			}
+			if imf.Valid && imf.String != "" {
+				os.Remove(filepath.Join(h.dataDir, "images", imf.String))
+			}
+		}
+		rows.Close()
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		log.Printf("Error starting transaction: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete answers for games of this quiz
+	if _, err := tx.Exec(`DELETE FROM answers WHERE team_id IN (SELECT id FROM teams WHERE game_id IN (SELECT id FROM games WHERE quiz_id = ?))`, quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting answers: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete players for games of this quiz
+	if _, err := tx.Exec(`DELETE FROM players WHERE team_id IN (SELECT id FROM teams WHERE game_id IN (SELECT id FROM games WHERE quiz_id = ?))`, quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting players: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete teams for games of this quiz
+	if _, err := tx.Exec(`DELETE FROM teams WHERE game_id IN (SELECT id FROM games WHERE quiz_id = ?)`, quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting teams: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete games
+	if _, err := tx.Exec("DELETE FROM games WHERE quiz_id = ?", quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting games: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete questions
+	if _, err := tx.Exec("DELETE FROM questions WHERE round_id IN (SELECT id FROM rounds WHERE quiz_id = ?)", quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting questions: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete rounds
+	if _, err := tx.Exec("DELETE FROM rounds WHERE quiz_id = ?", quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting rounds: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete quiz
+	if _, err := tx.Exec("DELETE FROM quizzes WHERE id = ?", quizID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting quiz: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		log.Printf("Error committing quiz deletion: %v", err)
+		http.Error(w, "Error deleting quiz", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("HX-Redirect", "/admin")
+	w.WriteHeader(http.StatusOK)
+}
+
+// GetDeleteQuizConfirm returns a confirmation partial for quiz deletion.
+func (h *AdminHandler) GetDeleteQuizConfirm(w http.ResponseWriter, r *http.Request) {
+	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid quiz ID", http.StatusBadRequest)
+		return
+	}
+
+	var quiz models.Quiz
+	err = h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", quizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
+	if err != nil {
+		http.Error(w, "Quiz not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.renderPartial(w, quiz, "quiz_delete_confirm", "templates/admin/partials/quiz_delete_confirm.html")
+}
+
+// GetQuizRow returns the normal quiz row partial (for cancel swap-back).
+func (h *AdminHandler) GetQuizRow(w http.ResponseWriter, r *http.Request) {
+	quizID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		http.Error(w, "Invalid quiz ID", http.StatusBadRequest)
+		return
+	}
+
+	var quiz models.Quiz
+	err = h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", quizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
+	if err != nil {
+		http.Error(w, "Quiz not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.renderPartial(w, quiz, "quiz_row", "templates/admin/partials/quiz_row.html")
 }
 
 func (h *AdminHandler) PostCreateGame(w http.ResponseWriter, r *http.Request) {
@@ -724,10 +1087,10 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 	if game.State == "question" && game.CurrentQuestionID.Valid {
 		var q models.Question
 		err = h.db.QueryRow(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 			FROM questions WHERE id = ?
 		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 		if err == nil {
 			data["CurrentQuestion"] = q
 			// Count answers for this question
@@ -762,7 +1125,7 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 	var rwq []RoundWithQuestions
 	for _, rd := range rounds {
 		qRows, err := h.db.Query(`
-			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 			FROM questions WHERE round_id = ? ORDER BY order_index
 		`, rd.ID)
 		if err != nil {
@@ -772,7 +1135,7 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 		var questions []models.Question
 		for qRows.Next() {
 			var q models.Question
-			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 			questions = append(questions, q)
 		}
 		qRows.Close()
@@ -912,11 +1275,11 @@ func (h *AdminHandler) PostStartRound(w http.ResponseWriter, r *http.Request) {
 	// Find the first question in this round
 	var firstQuestion models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 		FROM questions WHERE round_id = ? ORDER BY order_index LIMIT 1
 	`, round.ID).Scan(&firstQuestion.ID, &firstQuestion.RoundID, &firstQuestion.QuestionText,
 		&firstQuestion.QuestionType, &firstQuestion.CorrectAnswer, &firstQuestion.Options,
-		&firstQuestion.VideoFilename, &firstQuestion.Points, &firstQuestion.OrderIndex)
+		&firstQuestion.VideoFilename, &firstQuestion.ImageFilename, &firstQuestion.Points, &firstQuestion.OrderIndex)
 
 	if err != nil {
 		http.Error(w, "No questions in this round", http.StatusUnprocessableEntity)
@@ -957,14 +1320,14 @@ func (h *AdminHandler) PostNextQuestion(w http.ResponseWriter, r *http.Request) 
 	// Find next question in the current round
 	var nextQuestion models.Question
 	err = h.db.QueryRow(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 		FROM questions WHERE round_id = ? AND order_index > (
 			SELECT order_index FROM questions WHERE id = ?
 		) ORDER BY order_index LIMIT 1
 	`, game.CurrentRoundID.Int64, game.CurrentQuestionID.Int64).Scan(
 		&nextQuestion.ID, &nextQuestion.RoundID, &nextQuestion.QuestionText,
 		&nextQuestion.QuestionType, &nextQuestion.CorrectAnswer, &nextQuestion.Options,
-		&nextQuestion.VideoFilename, &nextQuestion.Points, &nextQuestion.OrderIndex)
+		&nextQuestion.VideoFilename, &nextQuestion.ImageFilename, &nextQuestion.Points, &nextQuestion.OrderIndex)
 
 	if err == sql.ErrNoRows {
 		// No more questions in this round — host should end round instead
@@ -1303,7 +1666,7 @@ func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
 
 	// Load questions for this round
 	qRows, err := h.db.Query(`
-		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+		SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index
 		FROM questions WHERE round_id = ? ORDER BY order_index
 	`, game.CurrentRoundID.Int64)
 	if err != nil {
@@ -1313,7 +1676,7 @@ func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
 	var questions []models.Question
 	for qRows.Next() {
 		var q models.Question
-		qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+		qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.ImageFilename, &q.Points, &q.OrderIndex)
 		questions = append(questions, q)
 	}
 	qRows.Close()
@@ -1737,6 +2100,9 @@ func buildStateChangeEventData(db *sql.DB, gameID int64, state string, question 
 		}
 		if question.VideoFilename.Valid {
 			qData["video_filename"] = question.VideoFilename.String
+		}
+		if question.ImageFilename.Valid {
+			qData["image_filename"] = question.ImageFilename.String
 		}
 		data["current_question"] = qData
 	}

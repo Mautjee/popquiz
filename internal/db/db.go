@@ -19,6 +19,9 @@ func Open(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(filepath.Join(dataDir, "videos"), 0755); err != nil {
 		return nil, fmt.Errorf("creating videos directory: %w", err)
 	}
+	if err := os.MkdirAll(filepath.Join(dataDir, "images"), 0755); err != nil {
+		return nil, fmt.Errorf("creating images directory: %w", err)
+	}
 
 	dbPath := filepath.Join(dataDir, "popquiz.db")
 	db, err := sql.Open("sqlite", dbPath)
@@ -172,6 +175,17 @@ func migrate(db *sql.DB) error {
 	} else if modeCount == 0 {
 		if _, err := tx.Exec("ALTER TABLE quizzes ADD COLUMN mode TEXT NOT NULL DEFAULT 'online' CHECK(mode IN ('online', 'offline'))"); err != nil {
 			log.Printf("Warning: could not add mode column: %v", err)
+		}
+	}
+
+	// Add image_filename column to questions if not exists
+	var imgCount int
+	err = db.QueryRow("SELECT COUNT(*) FROM pragma_table_info('questions') WHERE name='image_filename'").Scan(&imgCount)
+	if err != nil {
+		tx.Exec("ALTER TABLE questions ADD COLUMN image_filename TEXT")
+	} else if imgCount == 0 {
+		if _, err := tx.Exec("ALTER TABLE questions ADD COLUMN image_filename TEXT"); err != nil {
+			log.Printf("Warning: could not add image_filename column: %v", err)
 		}
 	}
 
