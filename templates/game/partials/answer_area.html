@@ -1,4 +1,5 @@
 {{define "answer_area"}}
+{{if eq .QuizMode "online"}}
 <div id="answer-area">
     {{if .IsHead}}
         {{if .HasAnswered}}
@@ -57,4 +58,5 @@
     <p class="text-gray-400 italic">Waiting for your team head to answer...</p>
     {{end}}
 </div>
+{{end}}
 {{end}}

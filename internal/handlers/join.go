@@ -181,6 +181,16 @@ func (h *JoinHandler) PostJoinTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If player already has a valid session, reuse it instead of creating duplicate
+	if playerID, _, ok := h.getPlayerFromCookie(r); ok {
+		var exists int
+		h.db.QueryRow("SELECT COUNT(*) FROM players WHERE id = ? AND team_id = ?", playerID, teamID).Scan(&exists)
+		if exists == 1 {
+			http.Redirect(w, r, "/game/"+code, http.StatusSeeOther)
+			return
+		}
+	}
+
 	// Verify game exists and is not ended
 	var game models.Game
 	err = h.db.QueryRow(`
@@ -255,6 +265,16 @@ func (h *JoinHandler) PostJoinTeam(w http.ResponseWriter, r *http.Request) {
 // PostCreateTeam handles creating a new team and joining it.
 func (h *JoinHandler) PostCreateTeam(w http.ResponseWriter, r *http.Request) {
 	code := chiURLParam(r, "code")
+
+	// If player already has a valid session, redirect to game
+	if playerID, _, ok := h.getPlayerFromCookie(r); ok {
+		var exists int
+		h.db.QueryRow("SELECT COUNT(*) FROM players WHERE id = ?", playerID).Scan(&exists)
+		if exists == 1 {
+			http.Redirect(w, r, "/game/"+code, http.StatusSeeOther)
+			return
+		}
+	}
 
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "Bad request", http.StatusBadRequest)
@@ -338,6 +358,14 @@ func (h *JoinHandler) PostCreateTeam(w http.ResponseWriter, r *http.Request) {
 // Helper to extract URL param
 func chiURLParam(r *http.Request, key string) string {
 	return chi.URLParam(r, key)
+}
+
+func (h *JoinHandler) getPlayerFromCookie(r *http.Request) (playerID, teamID int64, ok bool) {
+	cookie, err := r.Cookie("player_session")
+	if err != nil {
+		return 0, 0, false
+	}
+	return parsePlayerSession(cookie.Value, h.sessionSecret)
 }
 
 func signPlayerSession(playerID, teamID int64, secret string) string {

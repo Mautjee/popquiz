@@ -159,7 +159,7 @@ func (h *AdminHandler) PostLogin(w http.ResponseWriter, r *http.Request) {
 // --- Admin Index ---
 
 func (h *AdminHandler) GetIndex(w http.ResponseWriter, r *http.Request) {
-	rows, err := h.db.Query("SELECT id, title, created_at FROM quizzes ORDER BY created_at DESC")
+	rows, err := h.db.Query("SELECT id, title, mode, created_at FROM quizzes ORDER BY created_at DESC")
 	if err != nil {
 		log.Printf("Error loading quizzes: %v", err)
 		http.Error(w, "Error loading quizzes", http.StatusInternalServerError)
@@ -170,7 +170,7 @@ func (h *AdminHandler) GetIndex(w http.ResponseWriter, r *http.Request) {
 	var quizzes []models.Quiz
 	for rows.Next() {
 		var q models.Quiz
-		rows.Scan(&q.ID, &q.Title, &q.CreatedAt)
+		rows.Scan(&q.ID, &q.Title, &q.Mode, &q.CreatedAt)
 		quizzes = append(quizzes, q)
 	}
 
@@ -203,7 +203,12 @@ func (h *AdminHandler) PostQuiz(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := h.db.Exec("INSERT INTO quizzes (title) VALUES (?)", title)
+	mode := r.FormValue("mode")
+	if mode != "online" && mode != "offline" {
+		mode = "online"
+	}
+
+	result, err := h.db.Exec("INSERT INTO quizzes (title, mode) VALUES (?, ?)", title, mode)
 	if err != nil {
 		log.Printf("Error creating quiz: %v", err)
 		http.Error(w, "Error creating quiz", http.StatusInternalServerError)
@@ -222,7 +227,7 @@ func (h *AdminHandler) GetQuizEditor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var quiz models.Quiz
-	err = h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", quizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+	err = h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", quizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
 	if err != nil {
 		http.Error(w, "Quiz not found", http.StatusNotFound)
 		return
@@ -677,7 +682,7 @@ func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error
 
 	// Load quiz
 	var quiz models.Quiz
-	h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+	h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
 
 	data := map[string]interface{}{
 		"Game": game,
@@ -1001,8 +1006,12 @@ func (h *AdminHandler) PostEndRound(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-score ranged and multiple choice questions for this round
-	autoScoreRound(h.db, h.broker, game)
+	// Auto-score ranged and multiple choice questions for this round (online mode only)
+	var quiz models.Quiz
+	h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
+	if quiz.Mode == "online" {
+		autoScoreRound(h.db, h.broker, game)
+	}
 
 	// Update game state to round_reveal
 	_, err = h.db.Exec("UPDATE games SET state = 'round_reveal', show_question = 0 WHERE id = ?", game.ID)
@@ -1014,11 +1023,16 @@ func (h *AdminHandler) PostEndRound(w http.ResponseWriter, r *http.Request) {
 	// Publish state_change event
 	h.broker.Publish(code, sse.Event{Type: "state_change", Data: `{"state":"round_reveal"}`})
 
-	// Publish round_reveal with all questions and answers
-	publishRoundReveal(h.db, h.broker, game)
+	if quiz.Mode == "online" {
+		// Publish round_reveal with all questions and answers
+		publishRoundReveal(h.db, h.broker, game)
 
-	// Publish score_update so players see updated scores
-	publishScoreUpdate(h.db, h.broker, game)
+		// Publish score_update so players see updated scores
+		publishScoreUpdate(h.db, h.broker, game)
+	} else {
+		// Publish round_reveal for offline mode (questions + correct answers only)
+		publishRoundRevealOffline(h.db, h.broker, game)
+	}
 
 	// Return updated game state panel
 	h.renderGamePanelPartial(w, code)
@@ -1093,8 +1107,8 @@ func (h *AdminHandler) PostMark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if game.State != "round_reveal" {
-		http.Error(w, "Game is not in round_reveal state", http.StatusUnprocessableEntity)
+	if game.State != "round_reveal" && game.State != "question" {
+		http.Error(w, "Game is not in round_reveal or question state", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -1335,7 +1349,7 @@ func (h *AdminHandler) GetAnswerReview(w http.ResponseWriter, r *http.Request) {
 	h.db.QueryRow("SELECT name FROM rounds WHERE id = ?", game.CurrentRoundID.Int64).Scan(&roundName)
 
 	var quiz models.Quiz
-	h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
+	h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
 
 	data := map[string]interface{}{
 		"Game":           game,
@@ -1670,6 +1684,39 @@ func publishRoundReveal(db *sql.DB, broker *sse.Broker, game *models.Game) {
 	}
 
 	revealJSON, _ := json.Marshal(revealData)
+	broker.Publish(game.RoomCode, sse.Event{Type: "round_reveal", Data: string(revealJSON)})
+}
+
+func publishRoundRevealOffline(db *sql.DB, broker *sse.Broker, game *models.Game) {
+	// Load all questions for the round (offline: just questions + answers, no team submissions)
+	rows, err := db.Query(`
+		SELECT id, question_text, question_type, correct_answer, options, points
+		FROM questions WHERE round_id = ? ORDER BY order_index
+	`, game.CurrentRoundID.Int64)
+	if err != nil {
+		log.Printf("Error loading questions for offline round reveal: %v", err)
+		return
+	}
+	defer rows.Close()
+
+	type questionReveal struct {
+		ID             int64  `json:"id"`
+		QuestionText   string `json:"question_text"`
+		QuestionType   string `json:"question_type"`
+		CorrectAnswer  string `json:"correct_answer"`
+		Options        string `json:"options"`
+		Points          int    `json:"points"`
+	}
+
+	var questions []questionReveal
+	for rows.Next() {
+		var q questionReveal
+		rows.Scan(&q.ID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.Points)
+		questions = append(questions, q)
+	}
+
+	// Offline: just reveal questions without team answers
+	revealJSON, _ := json.Marshal(questions)
 	broker.Publish(game.RoomCode, sse.Event{Type: "round_reveal", Data: string(revealJSON)})
 }
 

@@ -167,6 +167,10 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 		}
 	}
 
+	// Load quiz mode
+	var quizMode string
+	h.db.QueryRow("SELECT mode FROM quizzes WHERE id = ?", game.QuizID).Scan(&quizMode)
+
 	data := map[string]interface{}{
 		"Game":         game,
 		"Player":      player,
@@ -177,6 +181,7 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 		"Players":     players,
 		"ShowQuestion": game.ShowQuestion == 1,
 		"MCOptions":   mcOptions,
+		"QuizMode":     quizMode,
 	}
 
 	// Load round and question info if in question state
@@ -477,6 +482,10 @@ func (h *GameHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Load quiz mode
+	var quiz models.Quiz
+	h.db.QueryRow("SELECT id, title, mode, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.Mode, &quiz.CreatedAt)
+
 	// Load leaderboard
 	rows, err := h.db.Query("SELECT id, game_id, name, score FROM teams WHERE game_id = ? ORDER BY score DESC", game.ID)
 	if err != nil {
@@ -503,6 +512,41 @@ func (h *GameHandler) GetResults(w http.ResponseWriter, r *http.Request) {
 		"Game":    game,
 		"Results": results,
 		"Code":    code,
+		"QuizMode": quiz.Mode,
+	}
+
+	// For offline mode, load round/question summary
+	if quiz.Mode == "offline" {
+		type QuestionSummary struct {
+			QuestionText  string
+			CorrectAnswer string
+		}
+		type RoundSummary struct {
+			RoundName  string
+			Questions  []QuestionSummary
+		}
+		var roundSummary []RoundSummary
+		rRows, err := h.db.Query("SELECT id, name FROM rounds WHERE quiz_id = ? ORDER BY order_index", game.QuizID)
+		if err == nil {
+			for rRows.Next() {
+				var rID int64
+				var rName string
+				rRows.Scan(&rID, &rName)
+				qRows, err := h.db.Query("SELECT question_text, correct_answer FROM questions WHERE round_id = ? ORDER BY order_index", rID)
+				var questions []QuestionSummary
+				if err == nil {
+					for qRows.Next() {
+						var qs QuestionSummary
+						qRows.Scan(&qs.QuestionText, &qs.CorrectAnswer)
+						questions = append(questions, qs)
+					}
+					qRows.Close()
+				}
+				roundSummary = append(roundSummary, RoundSummary{RoundName: rName, Questions: questions})
+			}
+			rRows.Close()
+		}
+		data["RoundSummary"] = roundSummary
 	}
 
 	h.render(w, data, "results.html", "templates/game/results.html")
