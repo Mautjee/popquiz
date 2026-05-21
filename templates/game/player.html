@@ -4,7 +4,7 @@
 
 {{define "content"}}
 <div class="max-w-2xl mx-auto p-8" id="game-container">
-    <div class="flex justify-between items-center mb-6">
+    <div class="flex justify-between items-center mb-6" id="team-header">
         <div>
             <h1 class="text-2xl font-bold text-indigo-400">{{.Team.Name}}</h1>
             {{if .IsHead}}<p class="text-yellow-400 text-sm">👑 You are the Team Head</p>{{else}}<p class="text-gray-400 text-sm">Team Member</p>{{end}}
@@ -16,119 +16,7 @@
     </div>
 
     <div id="game-state-content">
-        {{if eq .Game.State "lobby"}}
-        <div class="text-center py-12">
-            <h2 class="text-3xl font-bold text-yellow-400 mb-4">Waiting for host...</h2>
-            <p class="text-gray-400">The game will start soon. Hang tight!</p>
-        </div>
-
-        {{else if eq .Game.State "question"}}
-        {{if .CurrentQuestion}}
-        <div class="bg-gray-800 rounded-lg p-6 mb-4" id="question-area">
-            {{if .CurrentRound}}
-            <p class="text-sm text-gray-400 mb-2">{{.CurrentRound.Name}}</p>
-            {{end}}
-            <h2 class="text-xl font-semibold mb-4" id="question-text">{{.CurrentQuestion.QuestionText}}</h2>
-            <p class="text-gray-400 text-sm mb-4">Points: {{.CurrentQuestion.Points}} | Type: {{.CurrentQuestion.QuestionType}}</p>
-
-            {{if .CurrentQuestion.VideoFilename.Valid}}
-            <!-- Video question: video and answer hidden until SSE triggers -->
-            <div id="video-container" class="mb-4">
-                <video id="video-player" class="w-full rounded-lg bg-black" preload="metadata">
-                    <source src="/static/videos/{{.CurrentQuestion.VideoFilename.String}}" type="video/mp4">
-                </video>
-                <button id="manual-play-btn" class="mt-2 px-4 py-2 bg-purple-600 hover:bg-purple-700 rounded text-white text-sm hidden">
-                    Play Video
-                </button>
-            </div>
-            <div id="question-reveal" class="hidden">
-                <!-- Question text and answer input revealed by show_question event -->
-            </div>
-            {{end}}
-
-            {{if not .CurrentQuestion.VideoFilename.Valid}}
-            <!-- Text question: answer input visible immediately -->
-            <div id="answer-area">
-                {{if .IsHead}}
-                    {{if .HasAnswered}}
-                    <div class="bg-green-500/20 border border-green-500 text-green-200 px-4 py-3 rounded">
-                        ✅ Answer submitted
-                    </div>
-                    {{else}}
-                    <form method="POST" action="/game/{{.Code}}/answer" class="space-y-3" id="answer-form">
-                        <input type="hidden" name="question_id" value="{{.CurrentQuestion.ID}}">
-                        {{if eq .CurrentQuestion.QuestionType "multiple_choice"}}
-                        <div class="space-y-2" id="mc-options">
-                            {{if .CurrentQuestion.Options.Valid}}
-                            {{$opts := .CurrentQuestion.Options}}
-                            <!-- Options rendered as radio buttons by JS -->
-                            {{end}}
-                        </div>
-                        {{else}}
-                        <input type="{{if eq .CurrentQuestion.QuestionType "ranged"}}number{{else}}text{{end}}"
-                               name="answer_text" required
-                               class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
-                               placeholder="Your answer"
-                               {{if .PreviousAnswer}}value="{{.PreviousAnswer}}"{{end}}>
-                        {{end}}
-                        <button type="submit" class="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white transition">
-                            Submit Answer
-                        </button>
-                    </form>
-                    {{end}}
-                {{else}}
-                <p class="text-gray-400 italic">Your Team Head is answering...</p>
-                {{end}}
-            </div>
-            {{end}}
-        </div>
-        {{end}}
-
-        {{else if eq .Game.State "round_reveal"}}
-        <div class="space-y-4">
-            <h2 class="text-2xl font-bold text-yellow-400 mb-4">Round Complete! 🎉</h2>
-            {{if .RoundQuestions}}
-            {{range .RoundQuestions}}
-            <div class="bg-gray-800 rounded-lg p-4">
-                <h3 class="font-semibold">{{.QuestionText}}</h3>
-                <p class="text-green-400 text-sm">Correct answer: {{.CorrectAnswer}}</p>
-                {{range $.TeamAnswers}}
-                {{if eq .QuestionID $.CurrentQuestion.ID}}
-                <p class="text-gray-300 text-sm">Your answer: {{.AnswerText}}
-                    {{if .IsCorrect}}{{if eq (index .IsCorrect 0) 1}}✅{{else}}❌{{end}}
-                    {{end}}
-                </p>
-                {{end}}
-                {{end}}
-            </div>
-            {{end}}
-            {{end}}
-
-            {{if .Leaderboard}}
-            <div class="bg-gray-800 rounded-lg p-4 mt-4">
-                <h3 class="text-lg font-semibold mb-3">Leaderboard</h3>
-                <table class="w-full">
-                    <thead><tr class="text-gray-400 text-sm"><th class="text-left">Rank</th><th class="text-left">Team</th><th class="text-right">Score</th></tr></thead>
-                    <tbody>
-                    {{range $i, $t := .Leaderboard}}
-                    <tr class="{{if eq $i 0}}text-yellow-400{{end}}">
-                        <td>{{add $i 1}}</td><td>{{$t.Name}}</td><td class="text-right">{{$t.Score}}</td>
-                    </tr>
-                    {{end}}
-                    </tbody>
-                </table>
-            </div>
-            {{end}}
-        </div>
-
-        {{else if eq .Game.State "ended"}}
-        <div class="text-center py-12">
-            <h2 class="text-3xl font-bold text-green-400 mb-4">Game Over! 🎉</h2>
-            <a href="/game/{{.Code}}/results" class="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white transition inline-block">
-                View Final Results →
-            </a>
-        </div>
-        {{end}}
+        {{template "game_state_content" .}}
     </div>
 </div>
 
@@ -137,8 +25,51 @@
     const es = new EventSource('/game/' + roomCode + '/events');
     const gameState = "{{.Game.State}}";
 
+    function refreshGameState() {
+        htmx.ajax('GET', '/game/' + roomCode + '/partial', {
+            target: '#game-state-content',
+            swap: 'innerHTML'
+        });
+    }
+
+    function refreshTeamHeader() {
+        htmx.ajax('GET', '/game/' + roomCode + '/team-info', {
+            target: '#team-header',
+            swap: 'outerHTML'
+        });
+    }
+
+    function setupVideoPlayer() {
+        const videoEl = document.getElementById('video-player');
+        if (videoEl) {
+            videoEl.addEventListener('ended', function() {
+                const manualBtn = document.getElementById('manual-play-btn');
+                if (manualBtn) {
+                    manualBtn.classList.add('hidden');
+                }
+                videoEl.controls = false;
+            });
+
+            const manualBtn = document.getElementById('manual-play-btn');
+            if (manualBtn) {
+                manualBtn.classList.remove('hidden');
+                manualBtn.addEventListener('click', function() {
+                    videoEl.play();
+                });
+            }
+        }
+    }
+
+    // Initial setup
+    setupVideoPlayer();
+
+    // Re-setup video player after HTMX swaps
+    document.body.addEventListener('htmx:afterSwap', function(e) {
+        setupVideoPlayer();
+    });
+
     es.addEventListener('state_change', function(e) {
-        location.reload();
+        refreshGameState();
     });
 
     es.addEventListener('video_play', function(e) {
@@ -162,19 +93,20 @@
     });
 
     es.addEventListener('answer_accepted', function(e) {
-        location.reload();
+        // Handled by HTMX form submission - no action needed
     });
 
     es.addEventListener('round_reveal', function(e) {
-        location.reload();
+        refreshGameState();
     });
 
     es.addEventListener('score_update', function(e) {
-        location.reload();
+        refreshGameState();
     });
 
     es.addEventListener('head_change', function(e) {
-        location.reload();
+        refreshTeamHeader();
+        refreshGameState();
     });
 
     es.addEventListener('game_ended', function(e) {
@@ -185,26 +117,5 @@
         document.cookie = 'player_session=; Path=/; Max-Age=0';
         window.location.href = '/';
     });
-
-    // Video ended handler
-    const videoEl = document.getElementById('video-player');
-    if (videoEl) {
-        videoEl.addEventListener('ended', function() {
-            const manualBtn = document.getElementById('manual-play-btn');
-            if (manualBtn) {
-                manualBtn.classList.add('hidden');
-            }
-            videoEl.controls = false;
-        });
-
-        // Manual play fallback
-        const manualBtn = document.getElementById('manual-play-btn');
-        if (manualBtn) {
-            manualBtn.classList.remove('hidden');
-            manualBtn.addEventListener('click', function() {
-                videoEl.play();
-            });
-        }
-    }
 </script>
 {{end}}

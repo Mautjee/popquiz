@@ -22,12 +22,12 @@ import (
 )
 
 type AdminHandler struct {
-	db                *sql.DB
-	broker            *sse.Broker
-	adminPassword     string
-	sessionSecret     string
-	dataDir           string
-	templates         *template.Template
+	db            *sql.DB
+	broker        *sse.Broker
+	adminPassword string
+	sessionSecret string
+	dataDir       string
+	templates     *template.Template
 }
 
 func NewAdminHandler(db *sql.DB, broker *sse.Broker, adminPassword, sessionSecret, dataDir string) *AdminHandler {
@@ -42,6 +42,8 @@ func NewAdminHandler(db *sql.DB, broker *sse.Broker, adminPassword, sessionSecre
 		"templates/admin/index.html",
 		"templates/admin/quiz_editor.html",
 		"templates/admin/game_panel.html",
+		"templates/admin/partials/game_panel_game_state.html",
+		"templates/admin/partials/game_panel_teams.html",
 	))
 	return &AdminHandler{
 		db:            db,
@@ -480,9 +482,8 @@ func (h *AdminHandler) PostCreateGame(w http.ResponseWriter, r *http.Request) {
 
 // --- Game Panel ---
 
-func (h *AdminHandler) GetGamePanel(w http.ResponseWriter, r *http.Request) {
-	code := chi.URLParam(r, "code")
-
+// buildGameData loads all data needed for the game panel template.
+func (h *AdminHandler) buildGameData(code string) (map[string]interface{}, error) {
 	var game models.Game
 	err := h.db.QueryRow(`
 		SELECT id, quiz_id, room_code, state, current_question_id, current_round_id, created_at
@@ -490,92 +491,137 @@ func (h *AdminHandler) GetGamePanel(w http.ResponseWriter, r *http.Request) {
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
 		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
 	if err != nil {
-		http.Error(w, "Game not found", http.StatusNotFound)
-		return
+		return nil, err
 	}
 
 	// Load quiz
 	var quiz models.Quiz
 	h.db.QueryRow("SELECT id, title, created_at FROM quizzes WHERE id = ?", game.QuizID).Scan(&quiz.ID, &quiz.Title, &quiz.CreatedAt)
 
-	// Load rounds for this quiz
-	rows, err := h.db.Query(`
-		SELECT id, quiz_id, name, type, order_index FROM rounds
-		WHERE quiz_id = ? ORDER BY order_index
-	`, game.QuizID)
-	if err == nil {
-		var rounds []models.Round
-		for rows.Next() {
-			var rd models.Round
-			rows.Scan(&rd.ID, &rd.QuizID, &rd.Name, &rd.Type, &rd.OrderIndex)
-			rounds = append(rounds, rd)
-		}
-		rows.Close()
+	data := map[string]interface{}{
+		"Game": game,
+		"Quiz": quiz,
+		"Code": code,
+	}
 
-		// Load questions for each round
-		type RoundWithQuestions struct {
-			Round     models.Round
-			Questions []models.Question
-		}
-		var rwq []RoundWithQuestions
-		for _, rd := range rounds {
-			qRows, _ := h.db.Query(`
-				SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
-				FROM questions WHERE round_id = ? ORDER BY order_index
-			`, rd.ID)
-			var questions []models.Question
-			if qRows != nil {
-				for qRows.Next() {
-					var q models.Question
-					qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
-					questions = append(questions, q)
-				}
-				qRows.Close()
-			}
-			rwq = append(rwq, RoundWithQuestions{Round: rd, Questions: questions})
-		}
+	// Load teams
+	tRows, err := h.db.Query("SELECT id, game_id, name, score FROM teams WHERE game_id = ? ORDER BY name", game.ID)
+	if err != nil {
+		return nil, err
+	}
+	var teams []models.Team
+	for tRows.Next() {
+		var t models.Team
+		tRows.Scan(&t.ID, &t.GameID, &t.Name, &t.Score)
+		teams = append(teams, t)
+	}
+	tRows.Close()
+	if teams == nil {
+		teams = []models.Team{}
+	}
+	data["Teams"] = teams
 
-		data := map[string]interface{}{
-			"Game":                game,
-			"Quiz":                quiz,
-			"RoundsWithQuestions": rwq,
-			"Code":                code,
-		}
-
-		// Load teams
-		tRows, _ := h.db.Query("SELECT id, game_id, name, score FROM teams WHERE game_id = ? ORDER BY name", game.ID)
-		var teams []models.Team
-		if tRows != nil {
-			for tRows.Next() {
-				var t models.Team
-				tRows.Scan(&t.ID, &t.GameID, &t.Name, &t.Score)
-				teams = append(teams, t)
-			}
-			tRows.Close()
-		}
-		data["Teams"] = teams
-
-		// Load current question info if in question state
-		if game.State == "question" && game.CurrentQuestionID.Valid {
-			var q models.Question
-			h.db.QueryRow(`
-				SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
-				FROM questions WHERE id = ?
-			`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
-				&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+	// Load current question info if in question state
+	if game.State == "question" && game.CurrentQuestionID.Valid {
+		var q models.Question
+		err = h.db.QueryRow(`
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			FROM questions WHERE id = ?
+		`, game.CurrentQuestionID.Int64).Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType,
+			&q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+		if err == nil {
 			data["CurrentQuestion"] = q
-
 			// Count answers for this question
-			var answeredCount int
-			var totalTeams int
+			var answeredCount, totalTeams int
 			h.db.QueryRow("SELECT COUNT(DISTINCT team_id) FROM answers WHERE question_id = ?", q.ID).Scan(&answeredCount)
 			h.db.QueryRow("SELECT COUNT(*) FROM teams WHERE game_id = ?", game.ID).Scan(&totalTeams)
 			data["AnsweredCount"] = answeredCount
 			data["TotalTeams"] = totalTeams
 		}
-
-		h.templates.ExecuteTemplate(w, "game_panel.html", data)
 	}
+
+	// Load rounds with questions
+	rows, err := h.db.Query(`
+		SELECT id, quiz_id, name, type, order_index FROM rounds
+		WHERE quiz_id = ? ORDER BY order_index
+	`, game.QuizID)
+	if err != nil {
+		return data, nil
+	}
+	var rounds []models.Round
+	for rows.Next() {
+		var rd models.Round
+		rows.Scan(&rd.ID, &rd.QuizID, &rd.Name, &rd.Type, &rd.OrderIndex)
+		rounds = append(rounds, rd)
+	}
+	rows.Close()
+
+	type RoundWithQuestions struct {
+		Round     models.Round
+		Questions []models.Question
+	}
+	var rwq []RoundWithQuestions
+	for _, rd := range rounds {
+		qRows, err := h.db.Query(`
+			SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, points, order_index
+			FROM questions WHERE round_id = ? ORDER BY order_index
+		`, rd.ID)
+		if err != nil {
+			rwq = append(rwq, RoundWithQuestions{Round: rd})
+			continue
+		}
+		var questions []models.Question
+		for qRows.Next() {
+			var q models.Question
+			qRows.Scan(&q.ID, &q.RoundID, &q.QuestionText, &q.QuestionType, &q.CorrectAnswer, &q.Options, &q.VideoFilename, &q.Points, &q.OrderIndex)
+			questions = append(questions, q)
+		}
+		qRows.Close()
+		rwq = append(rwq, RoundWithQuestions{Round: rd, Questions: questions})
+	}
+	data["RoundsWithQuestions"] = rwq
+
+	return data, nil
+}
+
+func (h *AdminHandler) GetGamePanel(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+
+	data, err := h.buildGameData(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	h.templates.ExecuteTemplate(w, "game_panel.html", data)
+}
+
+// GetGamePanelPartial returns just the game state panel fragment for HTMX updates.
+func (h *AdminHandler) GetGamePanelPartial(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+
+	data, err := h.buildGameData(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.templates.ExecuteTemplate(w, "game_panel_game_state", data)
+}
+
+// GetAdminTeamsList returns just the teams list fragment for HTMX updates.
+func (h *AdminHandler) GetAdminTeamsList(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+
+	data, err := h.buildGameData(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.templates.ExecuteTemplate(w, "game_panel_teams", data)
 }
 
 func (h *AdminHandler) GetGameEvents(w http.ResponseWriter, r *http.Request) {
@@ -596,6 +642,17 @@ func (h *AdminHandler) getGame(code string) (*models.Game, error) {
 		return nil, err
 	}
 	return &game, nil
+}
+
+// renderGamePanelPartial renders and returns the game state panel HTML fragment.
+func (h *AdminHandler) renderGamePanelPartial(w http.ResponseWriter, code string) {
+	data, err := h.buildGameData(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
+	h.templates.ExecuteTemplate(w, "game_panel_game_state", data)
 }
 
 func (h *AdminHandler) PostStartRound(w http.ResponseWriter, r *http.Request) {
@@ -663,7 +720,8 @@ func (h *AdminHandler) PostStartRound(w http.ResponseWriter, r *http.Request) {
 	eventData := buildStateChangeEventData(h.db, game.ID, "question", &firstQuestion, &round)
 	h.broker.Publish(code, sse.Event{Type: "state_change", Data: eventData})
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return updated game state panel
+	h.renderGamePanelPartial(w, code)
 }
 
 func (h *AdminHandler) PostNextQuestion(w http.ResponseWriter, r *http.Request) {
@@ -714,7 +772,8 @@ func (h *AdminHandler) PostNextQuestion(w http.ResponseWriter, r *http.Request) 
 	eventData := buildStateChangeEventData(h.db, game.ID, "question", &nextQuestion, &round)
 	h.broker.Publish(code, sse.Event{Type: "state_change", Data: eventData})
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return updated game state panel
+	h.renderGamePanelPartial(w, code)
 }
 
 func (h *AdminHandler) PostEndRound(w http.ResponseWriter, r *http.Request) {
@@ -746,7 +805,8 @@ func (h *AdminHandler) PostEndRound(w http.ResponseWriter, r *http.Request) {
 	// Publish round_reveal with all questions and answers
 	publishRoundReveal(h.db, h.broker, game)
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return updated game state panel
+	h.renderGamePanelPartial(w, code)
 }
 
 func (h *AdminHandler) PostVideoPlay(w http.ResponseWriter, r *http.Request) {
@@ -779,7 +839,8 @@ func (h *AdminHandler) PostVideoPlay(w http.ResponseWriter, r *http.Request) {
 		Data: fmt.Sprintf(`{"question_id":%d}`, game.CurrentQuestionID.Int64),
 	})
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return updated game state panel (no state change, but refreshes UI)
+	h.renderGamePanelPartial(w, code)
 }
 
 func (h *AdminHandler) PostShowQuestion(w http.ResponseWriter, r *http.Request) {
@@ -800,7 +861,8 @@ func (h *AdminHandler) PostShowQuestion(w http.ResponseWriter, r *http.Request) 
 		Data: fmt.Sprintf(`{"question_id":%d}`, game.CurrentQuestionID.Int64),
 	})
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return updated game state panel (no state change, but refreshes UI)
+	h.renderGamePanelPartial(w, code)
 }
 
 func (h *AdminHandler) PostMark(w http.ResponseWriter, r *http.Request) {
@@ -877,7 +939,9 @@ func (h *AdminHandler) PostEndGame(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.broker.Publish(code, sse.Event{Type: "game_ended", Data: `{}`})
-	w.WriteHeader(http.StatusNoContent)
+
+	// Return updated game state panel
+	h.renderGamePanelPartial(w, code)
 }
 
 func (h *AdminHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
@@ -901,7 +965,8 @@ func (h *AdminHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 	// Note: ideally, we'd notify the specific players, but we no longer have their IDs.
 	// The SSE disconnect and game page redirect will handle this.
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return 200 OK with empty body for HTMX to remove the row
+	w.WriteHeader(http.StatusOK)
 }
 
 // --- Helper Functions ---

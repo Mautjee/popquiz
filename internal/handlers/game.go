@@ -33,6 +33,8 @@ func NewGameHandler(db *sql.DB, broker *sse.Broker, sessionSecret string) *GameH
 		"templates/base.html",
 		"templates/game/player.html",
 		"templates/game/results.html",
+		"templates/game/partials/answer_area.html",
+		"templates/game/partials/game_state_content.html",
 	))
 	return &GameHandler{
 		db:            db,
@@ -50,15 +52,14 @@ func (h *GameHandler) getPlayerFromCookie(r *http.Request) (playerID, teamID int
 	return parsePlayerSession(cookie.Value, h.sessionSecret)
 }
 
-func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
-	code := chi.URLParam(r, "code")
+// PlayerInfo holds basic team member data for the lobby display.
+type PlayerInfo struct {
+	Name   string
+	IsHead int
+}
 
-	playerID, teamID, ok := h.getPlayerFromCookie(r)
-	if !ok {
-		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
-		return
-	}
-
+// buildPlayerData loads all data needed to render the player page.
+func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[string]interface{}, error) {
 	// Look up game
 	var game models.Game
 	err := h.db.QueryRow(`
@@ -67,8 +68,7 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 	`, code).Scan(&game.ID, &game.QuizID, &game.RoomCode, &game.State,
 		&game.CurrentQuestionID, &game.CurrentRoundID, &game.CreatedAt)
 	if err != nil {
-		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
-		return
+		return nil, err
 	}
 
 	// Look up player
@@ -78,22 +78,34 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 		FROM players WHERE id = ?
 	`, playerID).Scan(&player.ID, &player.TeamID, &player.Name, &player.IsHead, &player.LastSeenAt, &player.JoinedAt)
 	if err != nil {
-		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
-		return
+		return nil, err
 	}
-
-	// Update last_seen_at
-	h.db.Exec("UPDATE players SET last_seen_at = datetime('now') WHERE id = ?", playerID)
 
 	// Look up team
 	var team models.Team
 	err = h.db.QueryRow("SELECT id, game_id, name, score FROM teams WHERE id = ?", teamID).Scan(&team.ID, &team.GameID, &team.Name, &team.Score)
 	if err != nil {
-		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
-		return
+		return nil, err
 	}
 
-	// Build template data
+	// Update last_seen_at
+	h.db.Exec("UPDATE players SET last_seen_at = datetime('now') WHERE id = ?", playerID)
+
+	// Load team members
+	var players []PlayerInfo
+	pRows, err := h.db.Query("SELECT name, is_head FROM players WHERE team_id = ? ORDER BY joined_at", teamID)
+	if err == nil {
+		for pRows.Next() {
+			var p PlayerInfo
+			pRows.Scan(&p.Name, &p.IsHead)
+			players = append(players, p)
+		}
+		pRows.Close()
+	}
+	if players == nil {
+		players = []PlayerInfo{}
+	}
+
 	data := map[string]interface{}{
 		"Game":    game,
 		"Player":  player,
@@ -101,6 +113,7 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 		"Code":    code,
 		"IsHead":  player.IsHead == 1,
 		"HeadIcon": "👑",
+		"Players": players,
 	}
 
 	// Load round and question info if in question state
@@ -201,7 +214,94 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	return data, nil
+}
+
+func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+
+	playerID, teamID, ok := h.getPlayerFromCookie(r)
+	if !ok {
+		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		return
+	}
+
+	data, err := h.buildPlayerData(code, playerID, teamID)
+	if err != nil {
+		http.Redirect(w, r, "/?code="+code, http.StatusSeeOther)
+		return
+	}
+
 	h.templates.ExecuteTemplate(w, "player.html", data)
+}
+
+// GetGamePartial returns just the game state content fragment for HTMX updates.
+func (h *GameHandler) GetGamePartial(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+
+	playerID, teamID, ok := h.getPlayerFromCookie(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	data, err := h.buildPlayerData(code, playerID, teamID)
+	if err != nil {
+		http.Error(w, "game not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.templates.ExecuteTemplate(w, "game_state_content", data)
+}
+
+// GetPlayerTeamInfo returns the team header fragment for HTMX updates.
+func (h *GameHandler) GetPlayerTeamInfo(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+
+	playerID, teamID, ok := h.getPlayerFromCookie(r)
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	var player models.Player
+	err := h.db.QueryRow(`
+		SELECT id, team_id, name, is_head, last_seen_at, joined_at
+		FROM players WHERE id = ?
+	`, playerID).Scan(&player.ID, &player.TeamID, &player.Name, &player.IsHead, &player.LastSeenAt, &player.JoinedAt)
+	if err != nil {
+		http.Error(w, "player not found", http.StatusNotFound)
+		return
+	}
+
+	var team models.Team
+	err = h.db.QueryRow("SELECT id, game_id, name, score FROM teams WHERE id = ?", teamID).Scan(&team.ID, &team.GameID, &team.Name, &team.Score)
+	if err != nil {
+		http.Error(w, "team not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprintf(w, `<div id="team-header" class="flex justify-between items-center mb-6">
+    <div>
+        <h1 class="text-2xl font-bold text-indigo-400">%s</h1>
+        %s
+    </div>
+    <div class="text-right">
+        <p class="text-gray-400 text-sm">Room Code</p>
+        <p class="text-2xl font-mono font-bold text-green-400">%s</p>
+    </div>
+</div>`,
+		template.HTMLEscapeString(team.Name),
+		template.HTMLEscapeString(func() string {
+			if player.IsHead == 1 {
+				return `<p class="text-yellow-400 text-sm">👑 You are the Team Head</p>`
+			}
+			return `<p class="text-gray-400 text-sm">Team Member</p>`
+		}()),
+		template.HTMLEscapeString(code),
+	)
 }
 
 func (h *GameHandler) GetEvents(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +399,15 @@ func (h *GameHandler) PostAnswer(w http.ResponseWriter, r *http.Request) {
 		h.broker.Publish("admin:"+code, sse.Event{Type: "all_answered", Data: fmt.Sprintf(`{"question_id":%d}`, questionID)})
 	}
 
-	w.WriteHeader(http.StatusNoContent)
+	// Return the answer area fragment showing "Answer submitted"
+	data, err := h.buildPlayerData(code, playerID, teamID)
+	if err != nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html")
+	h.templates.ExecuteTemplate(w, "answer_area", data)
 }
 
 func (h *GameHandler) GetResults(w http.ResponseWriter, r *http.Request) {

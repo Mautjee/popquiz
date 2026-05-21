@@ -68,6 +68,8 @@ func main() {
 	r.Get("/game/{code}/events", gameHandler.GetEvents)
 	r.Post("/game/{code}/answer", gameHandler.PostAnswer)
 	r.Get("/game/{code}/results", gameHandler.GetResults)
+	r.Get("/game/{code}/partial", gameHandler.GetGamePartial)
+	r.Get("/game/{code}/team-info", gameHandler.GetPlayerTeamInfo)
 
 	// Admin routes
 	r.Get("/admin/login", adminHandler.GetLogin)
@@ -85,6 +87,8 @@ func main() {
 		r.Post("/quiz/{id}/game", adminHandler.PostCreateGame)
 		r.Get("/game/{code}", adminHandler.GetGamePanel)
 		r.Get("/game/{code}/events", adminHandler.GetGameEvents)
+		r.Get("/game/{code}/partial", adminHandler.GetGamePanelPartial)
+		r.Get("/game/{code}/teams", adminHandler.GetAdminTeamsList)
 		r.Post("/game/{code}/start-round", adminHandler.PostStartRound)
 		r.Post("/game/{code}/next", adminHandler.PostNextQuestion)
 		r.Post("/game/{code}/end-round", adminHandler.PostEndRound)
