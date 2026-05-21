@@ -280,9 +280,10 @@
                 correctInput.value = mcCorrect.value;
             }
         } else {
-            // Validate correct_answer is filled for non-MC
+            // Validate correct_answer is filled for non-MC (skip for offline rounds)
             const correctInput = form.querySelector('input[name="correct_answer"]');
-            if (correctInput && !correctInput.value.trim()) {
+            const isOffline = !form.querySelector('select[name="question_type"]');
+            if (!isOffline && correctInput && !correctInput.value.trim()) {
                 e.preventDefault();
                 alert('Correct answer is required');
                 return;

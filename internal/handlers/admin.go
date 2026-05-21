@@ -388,8 +388,12 @@ func (h *AdminHandler) PostQuestion(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if questionText == "" || correctAnswer == "" {
-		http.Error(w, "Question text and correct answer required", http.StatusUnprocessableEntity)
+	if questionText == "" {
+		http.Error(w, "Question text required", http.StatusUnprocessableEntity)
+		return
+	}
+	if quizMode != "offline" && correctAnswer == "" {
+		http.Error(w, "Correct answer required", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -470,7 +474,7 @@ func (h *AdminHandler) PostQuestion(w http.ResponseWriter, r *http.Request) {
 
 	_, err = h.db.Exec(`
 		INSERT INTO questions (round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, roundID, questionText, questionType, correctAnswer, optionsJSON, videoFilename, imageFilename, points, orderIndex)
 
 	// Get quiz_id for redirect
