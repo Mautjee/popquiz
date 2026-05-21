@@ -1093,8 +1093,8 @@ func (h *AdminHandler) PostMark(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if game.State != "round_reveal" {
-		http.Error(w, "Game is not in round_reveal state", http.StatusUnprocessableEntity)
+	if game.State != "round_reveal" && game.State != "question" {
+		http.Error(w, "Game is not in round_reveal or question state", http.StatusUnprocessableEntity)
 		return
 	}
 

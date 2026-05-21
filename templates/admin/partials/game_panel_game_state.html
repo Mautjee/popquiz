@@ -35,6 +35,13 @@
             </form>
         </div>
         {{end}}
+        {{if eq .Quiz.Mode "online"}}
+        <div class="mb-3">
+            <a href="/admin/game/{{.Code}}/answers" class="py-2 px-4 bg-yellow-600 hover:bg-yellow-700 rounded-lg font-semibold text-white transition inline-block">
+                📋 Review Answers
+            </a>
+        </div>
+        {{end}}
         <div class="flex gap-3">
             <form hx-post="/admin/game/{{.Code}}/next" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/next">
                 <button type="submit" class="py-2 px-4 bg-blue-600 hover:bg-blue-700 rounded-lg font-semibold text-white transition {{if not .HasNextQuestion}}opacity-50 cursor-not-allowed{{end}}" {{if not .HasNextQuestion}}disabled{{end}}>
@@ -51,11 +58,13 @@
         {{end}}
 
         {{if eq .Game.State "round_reveal"}}
+        {{if eq .Quiz.Mode "online"}}
         <div class="flex gap-3">
             <a href="/admin/game/{{.Code}}/answers" class="py-2 px-4 bg-yellow-600 hover:bg-yellow-700 rounded-lg font-semibold text-white transition inline-block">
                 📋 Review Answers
             </a>
         </div>
+        {{end}}
         <div class="flex gap-3">
             <form hx-post="/admin/game/{{.Code}}/start-round" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/start-round">
                 <button type="submit" class="py-2 px-4 bg-green-600 hover:bg-green-700 rounded-lg font-semibold text-white transition">
