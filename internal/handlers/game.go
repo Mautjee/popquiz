@@ -167,6 +167,10 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 		}
 	}
 
+	// Load quiz mode
+	var quizMode string
+	h.db.QueryRow("SELECT mode FROM quizzes WHERE id = ?", game.QuizID).Scan(&quizMode)
+
 	data := map[string]interface{}{
 		"Game":         game,
 		"Player":      player,
@@ -177,6 +181,7 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 		"Players":     players,
 		"ShowQuestion": game.ShowQuestion == 1,
 		"MCOptions":   mcOptions,
+		"QuizMode":     quizMode,
 	}
 
 	// Load round and question info if in question state

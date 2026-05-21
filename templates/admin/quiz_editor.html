@@ -13,13 +13,33 @@
                    class="w-full px-4 py-2 bg-gray-700 border border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                    placeholder="e.g., Friday Night Trivia">
         </div>
+        <div>
+            <label class="block text-sm font-medium text-gray-300 mb-2">Quiz Mode</label>
+            <div class="space-y-3">
+                <label class="flex items-start gap-3 bg-gray-700 border border-gray-600 rounded-lg p-4 cursor-pointer hover:border-indigo-500 transition">
+                    <input type="radio" name="mode" value="online" checked class="mt-1">
+                    <div>
+                        <p class="font-semibold">📱 Live Quiz</p>
+                        <p class="text-gray-400 text-sm">Players submit answers on their phones. Scores tracked automatically.</p>
+                    </div>
+                </label>
+                <label class="flex items-start gap-3 bg-gray-700 border border-gray-600 rounded-lg p-4 cursor-pointer hover:border-indigo-500 transition">
+                    <input type="radio" name="mode" value="offline" class="mt-1">
+                    <div>
+                        <p class="font-semibold">🖊️ Paper Round</p>
+                        <p class="text-gray-400 text-sm">Players write answers on paper. Host controls the video/question flow. No digital scoring.</p>
+                    </div>
+                </label>
+            </div>
+        </div>
         <button type="submit" class="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 rounded-lg font-semibold text-white transition">
             Create Quiz
         </button>
     </form>
     {{else}}
     <h1 class="text-3xl font-bold text-indigo-400 mb-2">📝 {{.Quiz.Title}}</h1>
-    <p class="text-gray-400 mb-8">Quiz ID: {{.Quiz.ID}}</p>
+    <p class="text-gray-400 mb-2">Quiz ID: {{.Quiz.ID}}</p>
+    <p class="text-gray-400 mb-8">Mode: <span class="{{if eq .Quiz.Mode "offline"}}text-orange-400{{else}}text-green-400{{end}} font-semibold">{{if eq .Quiz.Mode "offline"}}🖊️ Paper Round{{else}}📱 Live Quiz{{end}}</span></p>
 
     <!-- Create Game -->
     {{if .Game}}

@@ -64,6 +64,23 @@
                 📋 Review Answers
             </a>
         </div>
+        {{else}}
+        {{/* Offline mode: show correct answers summary */}}
+        <div class="bg-gray-700 rounded-lg p-4">
+            <h3 class="text-lg font-semibold mb-2">📝 Correct Answers</h3>
+            {{if .RoundsWithQuestions}}
+            {{range .RoundsWithQuestions}}
+            {{if and $.Game.CurrentRoundID.Valid (eq .Round.ID $.Game.CurrentRoundID.Int64)}}
+            {{range .Questions}}
+            <div class="mb-2">
+                <p class="text-gray-200">{{.QuestionText}}</p>
+                <p class="text-green-400 text-sm">✅ {{.CorrectAnswer}}</p>
+            </div>
+            {{end}}
+            {{end}}
+            {{end}}
+            {{end}}
+        </div>
         {{end}}
         <div class="flex gap-3">
             <form hx-post="/admin/game/{{.Code}}/start-round" hx-target="#game-state" hx-swap="outerHTML" method="POST" action="/admin/game/{{.Code}}/start-round">
@@ -96,13 +113,15 @@
     </div>
 
     <!-- Answer tracking -->
+    {{if eq .Quiz.Mode "online"}}
     <div class="bg-gray-800 rounded-lg p-4" id="answer-tracking">
         <h3 class="text-lg font-semibold mb-2">Answer Status</h3>
         <p class="text-gray-300" id="answer-count">{{if .AnsweredCount}}{{.AnsweredCount}}/{{.TotalTeams}} teams answered{{else}}Waiting for answers...{{end}}</p>
     </div>
+    {{end}}
 
-    <!-- Round Reveal: Open answer marking -->
-    {{if eq .Game.State "round_reveal"}}
+    <!-- Round Reveal: Open answer marking (online mode only) -->
+    {{if and (eq .Game.State "round_reveal") (eq .Quiz.Mode "online")}}
     <div class="bg-gray-800 rounded-lg p-4" id="mark-answers">
         <h3 class="text-lg font-semibold mb-2">Mark Open Answers</h3>
         <p class="text-gray-400 text-sm">Use "Review Answers" to approve or deny open answers.</p>

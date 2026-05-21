@@ -44,6 +44,19 @@
 {{else if eq .Game.State "round_reveal"}}
 <div class="space-y-4">
     <h2 class="text-2xl font-bold text-yellow-400 mb-4">Round Complete! 🎉</h2>
+
+    {{if eq .QuizMode "offline"}}
+    {{/* Offline mode: show correct answers only, no team scores */}}
+    {{if .RoundQuestions}}
+    {{range .RoundQuestions}}
+    <div class="bg-gray-800 rounded-lg p-4">
+        <h3 class="font-semibold">{{.QuestionText}}</h3>
+        <p class="text-green-400 text-sm">Correct answer: {{.CorrectAnswer}}</p>
+    </div>
+    {{end}}
+    {{end}}
+    {{else}}
+    {{/* Online mode: show team answers + leaderboard */}}
     {{if .RoundQuestions}}
     {{range .RoundQuestions}}
     {{$qID := .ID}}
@@ -76,6 +89,7 @@
             </tbody>
         </table>
     </div>
+    {{end}}
     {{end}}
 </div>
 
