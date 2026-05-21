@@ -114,6 +114,7 @@ func main() {
 		r.Post("/game/{code}/end-game", adminHandler.PostEndGame)
 		r.Post("/game/{code}/reset", adminHandler.PostResetGame)
 		r.Delete("/game/{code}/team/{id}", adminHandler.DeleteTeam)
+		r.Post("/game/{code}/reset-teams", adminHandler.PostResetTeams)
 	})
 
 	srv := &http.Server{

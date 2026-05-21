@@ -1634,7 +1634,64 @@ func (h *AdminHandler) DeleteTeam(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// --- Answer Review Handlers ---
+// PostResetTeams deletes all teams, players and answers for a game so players
+// can rejoin fresh. The game stays in lobby state.
+func (h *AdminHandler) PostResetTeams(w http.ResponseWriter, r *http.Request) {
+	code := chi.URLParam(r, "code")
+	game, err := h.getGame(code)
+	if err != nil {
+		http.Error(w, "Game not found", http.StatusNotFound)
+		return
+	}
+
+	tx, err := h.db.Begin()
+	if err != nil {
+		http.Error(w, "Error resetting teams", http.StatusInternalServerError)
+		return
+	}
+
+	// Delete answers
+	if _, err := tx.Exec(`DELETE FROM answers WHERE team_id IN (SELECT id FROM teams WHERE game_id = ?)`, game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting answers on team reset: %v", err)
+		http.Error(w, "Error resetting teams", http.StatusInternalServerError)
+		return
+	}
+	// Delete players
+	if _, err := tx.Exec(`DELETE FROM players WHERE team_id IN (SELECT id FROM teams WHERE game_id = ?)`, game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting players on team reset: %v", err)
+		http.Error(w, "Error resetting teams", http.StatusInternalServerError)
+		return
+	}
+	// Delete teams
+	if _, err := tx.Exec(`DELETE FROM teams WHERE game_id = ?`, game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error deleting teams on team reset: %v", err)
+		http.Error(w, "Error resetting teams", http.StatusInternalServerError)
+		return
+	}
+	// Ensure game is in lobby state
+	if _, err := tx.Exec(`UPDATE games SET state = 'lobby', current_question_id = NULL, current_round_id = NULL, show_question = 0 WHERE id = ?`, game.ID); err != nil {
+		tx.Rollback()
+		log.Printf("Error resetting game state on team reset: %v", err)
+		http.Error(w, "Error resetting teams", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		http.Error(w, "Error resetting teams", http.StatusInternalServerError)
+		return
+	}
+
+	// Kick all connected players back to the join screen
+	h.broker.Publish(code, sse.Event{Type: "state_change", Data: `{"state":"lobby"}`})
+
+	// Return refreshed game panel
+	h.renderGamePanelPartial(w, code)
+}
+
+
 
 // QuestionAnswers holds a question and its answers for the review page.
 type QuestionAnswers struct {
