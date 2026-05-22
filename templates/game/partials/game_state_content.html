@@ -27,6 +27,12 @@
             ▶ Play Video
         </button>
     </div>
+    {{if .GroupQuestions}}
+    <!-- Video group: show all questions at once after video -->
+    <div id="question-reveal" {{if not .ShowQuestion}}class="hidden"{{end}}>
+        {{template "group_questions" .}}
+    </div>
+    {{else}}
     <div id="question-reveal" {{if not .ShowQuestion}}class="hidden"{{end}}>
         {{if .CurrentQuestion.ImageFilename.Valid}}
         <img src="/images/{{.CurrentQuestion.ImageFilename.String}}" class="w-full rounded-lg mb-4 max-h-64 object-contain">
@@ -35,6 +41,7 @@
         <p class="text-gray-400 text-sm mb-4">Points: {{.CurrentQuestion.Points}} | Type: {{.CurrentQuestion.QuestionType}}</p>
         {{template "answer_area" .}}
     </div>
+    {{end}}
     {{else}}
     <!-- Text question: question and answer visible immediately -->
     {{if .CurrentQuestion.ImageFilename.Valid}}
