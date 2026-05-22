@@ -202,6 +202,43 @@ func (h *GameHandler) buildPlayerData(code string, playerID, teamID int64) (map[
 				if err == nil && vgFilename.Valid && vgFilename.String != "" {
 					data["VideoURL"] = "/static/videos/" + vgFilename.String
 				}
+
+				// When show_question is active, load all questions in the group so they
+				// can all be displayed at once on the player screen.
+				if game.ShowQuestion == 1 {
+					type GroupQuestionItem struct {
+						Question      models.Question
+						HasAnswered   bool
+						PreviousAnswer string
+						MCOptions     []MCOpt
+					}
+					groupRows, err := h.db.Query(`
+						SELECT id, round_id, question_text, question_type, correct_answer, options, video_filename, image_filename, points, order_index, COALESCE(video_group_id, 0)
+						FROM questions WHERE video_group_id = ? ORDER BY order_index
+					`, q.VideoGroupID.Int64)
+					if err == nil {
+						var groupItems []GroupQuestionItem
+						for groupRows.Next() {
+							var gq models.Question
+							groupRows.Scan(&gq.ID, &gq.RoundID, &gq.QuestionText, &gq.QuestionType,
+								&gq.CorrectAnswer, &gq.Options, &gq.VideoFilename, &gq.ImageFilename,
+								&gq.Points, &gq.OrderIndex, &gq.VideoGroupID)
+							item := GroupQuestionItem{Question: gq}
+							var ac int
+							h.db.QueryRow("SELECT COUNT(*) FROM answers WHERE team_id = ? AND question_id = ?", teamID, gq.ID).Scan(&ac)
+							item.HasAnswered = ac > 0
+							if item.HasAnswered {
+								h.db.QueryRow("SELECT answer_text FROM answers WHERE team_id = ? AND question_id = ?", teamID, gq.ID).Scan(&item.PreviousAnswer)
+							}
+							if gq.QuestionType == "multiple_choice" && gq.Options.Valid {
+								item.MCOptions = parseMCOptions(gq.Options.String)
+							}
+							groupItems = append(groupItems, item)
+						}
+						groupRows.Close()
+						data["GroupQuestions"] = groupItems
+					}
+				}
 			}
 
 			// Parse MC options for this question
@@ -316,7 +353,7 @@ func (h *GameHandler) GetGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.render(w, data, "player.html", "templates/game/player.html", "templates/game/partials/answer_area.html", "templates/game/partials/game_state_content.html", "templates/game/partials/team_header.html")
+	h.render(w, data, "player.html", "templates/game/player.html", "templates/game/partials/answer_area.html", "templates/game/partials/group_questions.html", "templates/game/partials/game_state_content.html", "templates/game/partials/team_header.html")
 }
 
 // GetGamePartial returns just the game state content fragment for HTMX updates.
@@ -336,7 +373,7 @@ func (h *GameHandler) GetGamePartial(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
-	h.renderPartial(w, data, "game_state_content", "templates/game/partials/game_state_content.html", "templates/game/partials/answer_area.html")
+	h.renderPartial(w, data, "game_state_content", "templates/game/partials/game_state_content.html", "templates/game/partials/answer_area.html", "templates/game/partials/group_questions.html")
 }
 
 // GetPlayerTeamInfo returns the team header fragment for HTMX updates.
@@ -474,6 +511,25 @@ func (h *GameHandler) PostAnswer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/html")
+
+	// In group mode, return just the answer slot for this specific question
+	if r.FormValue("group_mode") == "1" {
+		// Find the question item for this question in GroupQuestions
+		type slotData struct {
+			QuestionID     int64
+			HasAnswered    bool
+			PreviousAnswer string
+			Code           string
+			IsHead         bool
+		}
+		var prevAnswer string
+		h.db.QueryRow("SELECT answer_text FROM answers WHERE team_id = ? AND question_id = ?", teamID, questionID).Scan(&prevAnswer)
+		sd := slotData{QuestionID: questionID, HasAnswered: true, PreviousAnswer: prevAnswer, Code: code, IsHead: true}
+		tmpl := template.Must(template.New("slot").Parse(`<div id="answer-slot-{{.QuestionID}}" class="bg-green-500/20 border border-green-500 text-green-200 px-3 py-2 rounded text-sm">✅ Answered: {{.PreviousAnswer}}</div>`))
+		tmpl.Execute(w, sd)
+		return
+	}
+
 	h.renderPartial(w, data, "answer_area", "templates/game/partials/answer_area.html")
 }
 

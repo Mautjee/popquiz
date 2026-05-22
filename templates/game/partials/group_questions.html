@@ -1,0 +1,72 @@
+{{define "group_questions"}}
+{{if eq .QuizMode "online"}}
+<div class="space-y-4" id="group-questions">
+    {{range .GroupQuestions}}
+    <div class="bg-gray-800 rounded-lg p-4">
+        <h3 class="text-lg font-semibold mb-1">{{.Question.QuestionText}}</h3>
+        <p class="text-gray-400 text-sm mb-3">Points: {{.Question.Points}} | Type: {{.Question.QuestionType}}</p>
+
+        {{if $.IsHead}}
+        <div id="answer-slot-{{.Question.ID}}">
+            {{if .HasAnswered}}
+            <div class="bg-green-500/20 border border-green-500 text-green-200 px-3 py-2 rounded text-sm">
+                ✅ Answered: {{.PreviousAnswer}}
+            </div>
+            {{else}}
+            <form hx-post="/game/{{$.Code}}/answer"
+                  hx-target="#answer-slot-{{.Question.ID}}"
+                  hx-swap="outerHTML"
+                  class="space-y-2">
+                <input type="hidden" name="question_id" value="{{.Question.ID}}">
+                <input type="hidden" name="group_mode" value="1">
+                {{if eq .Question.QuestionType "multiple_choice"}}
+                {{if .Question.Options.Valid}}
+                <input type="hidden" name="answer_text" id="mc-input-{{.Question.ID}}" value="">
+                <div class="space-y-1" id="mc-opts-{{.Question.ID}}">
+                    {{$qid := .Question.ID}}
+                    {{range $i, $opt := .MCOptions}}
+                    <button type="button"
+                            onclick="selectGroupMC(this, '{{$opt.Letter}}', 'mc-input-{{$qid}}')"
+                            class="mc-opt w-full text-left px-3 py-2 bg-gray-700 border border-gray-600 rounded hover:border-indigo-500 hover:bg-gray-600 transition text-sm">
+                        <span class="font-semibold text-indigo-400 mr-2">{{$opt.Letter}}.</span>{{$opt.Text}}
+                    </button>
+                    {{end}}
+                </div>
+                {{end}}
+                {{else if eq .Question.QuestionType "ranged"}}
+                <input type="number" step="any" name="answer_text" required
+                       class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded focus:ring-2 focus:ring-indigo-500 text-sm"
+                       placeholder="Enter a number">
+                {{else}}
+                <input type="text" name="answer_text" required
+                       class="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded focus:ring-2 focus:ring-indigo-500 text-sm"
+                       placeholder="Your answer">
+                {{end}}
+                <button type="submit"
+                        class="w-full py-2 px-4 bg-indigo-600 hover:bg-indigo-700 rounded font-semibold text-white transition text-sm">
+                    Submit Answer
+                </button>
+            </form>
+            {{end}}
+        </div>
+        {{else}}
+        <p class="text-gray-400 italic text-sm">Waiting for your team head to answer...</p>
+        {{end}}
+    </div>
+    {{end}}
+</div>
+<script>
+function selectGroupMC(btn, letter, inputId) {
+    var container = btn.closest('[id^="mc-opts-"]');
+    container.querySelectorAll('.mc-opt').forEach(function(b) {
+        b.classList.remove('border-indigo-500', 'bg-indigo-600');
+        b.classList.add('border-gray-600', 'bg-gray-700');
+    });
+    btn.classList.remove('border-gray-600', 'bg-gray-700');
+    btn.classList.add('border-indigo-500', 'bg-indigo-600');
+    var input = document.getElementById(inputId);
+    if (input) input.value = letter;
+}
+</script>
+{{end}}
+{{end}}
