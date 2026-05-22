@@ -1,11 +1,11 @@
 {{define "group_questions"}}
-{{if eq .QuizMode "online"}}
 <div class="space-y-4" id="group-questions">
     {{range .GroupQuestions}}
     <div class="bg-gray-800 rounded-lg p-4">
         <h3 class="text-lg font-semibold mb-1">{{.Question.QuestionText}}</h3>
         <p class="text-gray-400 text-sm mb-3">Points: {{.Question.Points}} | Type: {{.Question.QuestionType}}</p>
 
+        {{if eq $.QuizMode "online"}}
         {{if $.IsHead}}
         <div id="answer-slot-{{.Question.ID}}">
             {{if .HasAnswered}}
@@ -52,6 +52,7 @@
         {{else}}
         <p class="text-gray-400 italic text-sm">Waiting for your team head to answer...</p>
         {{end}}
+        {{end}}
     </div>
     {{end}}
 </div>
@@ -68,5 +69,4 @@ function selectGroupMC(btn, letter, inputId) {
     if (input) input.value = letter;
 }
 </script>
-{{end}}
 {{end}}
